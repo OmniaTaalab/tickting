@@ -1,0 +1,60 @@
+{
+  "userAvatars": [
+    {
+      "id": "user-1",
+      "src": "https://picsum.photos/seed/101/40/40",
+      "alt": "Avatar for Alice Johnson",
+      "width": 40,
+      "height": 40,
+      "data-ai-hint": "person face"
+    },
+    {
+      "id": "user-2",
+      "src": "https://picsum.photos/seed/102/40/40",
+      "alt": "Avatar for Bob Williams",
+      "width": 40,
+      "height": 40,
+      "data-ai-hint": "person face"
+    },
+    {
+      "id": "user-3",
+      "src": "https://picsum.photos/seed/103/40/40",
+      "alt": "Avatar for Charlie Brown",
+      "width": 40,
+      "height": 40,
+      "data-ai-hint": "person face"
+    },
+    {
+      "id": "user-4",
+      "src": "https://picsum.photos/seed/104/40/40",
+      "alt": "Avatar for Diana Miller",
+      "width": 40,
+      "height": 40,
+      "data-ai-hint": "person face"
+    },
+    {
+      "id": "user-5",
+      "src": "https://picsum.photos/seed/105/40/40",
+      "alt": "Avatar for Ethan Davis",
+      "width": 40,
+      "height": 40,
+      "data-ai-hint": "person face"
+    },
+    {
+      "id": "user-6",
+      "src": "https://picsum.photos/seed/106/40/40",
+      "alt": "Avatar for Fiona Garcia",
+      "width": 40,
+      "height": 40,
+      "data-ai-hint": "person face"
+    },
+    {
+      "id": "user-7",
+      "src": "https://picsum.photos/seed/107/40/40",
+      "alt": "Avatar for George Rodriguez",
+      "width": 40,
+      "height": 40,
+      "data-ai-hint": "person face"
+    }
+  ]
+}

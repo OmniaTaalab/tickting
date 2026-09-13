@@ -1,0 +1,112 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /tickets/{ticketId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if isTicketEditor();
+      allow delete: if isSignedIn() && (
+        ('createdBy' in resource.data && request.auth.uid == resource.data.createdBy.userId) || 
+        isAdmin()
+      );
+    }
+
+    match /users/{userId} {
+      allow get, list: if true;
+      allow create: if isOwner(userId) && request.auth.uid == userId;
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    match /departments/{departmentId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    match /divisions/{divisionId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /grades/{gradeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /campuses/{campusId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /schools/{schoolId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /system-logs/{logId} {
+      allow get, list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /mail/{mailId} {
+      allow create: if isSignedIn();
+      allow read, update, delete: if false;
+    }
+    
+    match /ticket-events/{ticketEventId} {
+      allow create: if true;
+      allow read, update: if isSignedIn() && request.auth.uid == resource.data.recipient;
+      allow delete: if false;
+    }
+
+    match /work-sessions/{sessionId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return isSignedIn() && exists(userPath) && get(userPath).data.role == 'Admin';
+    }
+    
+    function isTicketEditor() {
+      if (!isSignedIn()) return false;
+      
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      if (!exists(userPath)) {
+          return true; 
+      }
+      
+      let userData = get(userPath).data;
+      let isGlobalAdmin = userData.role == 'Admin';
+      let isGlobalManager = userData.role == 'Manager';
+      
+      let isCreator = ('createdBy' in resource.data) && (request.auth.uid == resource.data.createdBy.userId);
+      let isAssignee = ('assignedTo' in resource.data) && (resource.data.assignedTo != null) && (request.auth.uid == resource.data.assignedTo.userId);
+      
+      let ticketDeptId = ('departmentId' in resource.data) ? resource.data.departmentId : null;
+      let isDeptManager = isGlobalManager && (
+          (userData.departmentId != null && userData.departmentId == ticketDeptId)
+      );
+
+      return isCreator || isAssignee || isGlobalAdmin || isDeptManager;
+    }
+  }
+}

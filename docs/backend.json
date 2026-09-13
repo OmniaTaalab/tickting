@@ -1,0 +1,100 @@
+
+{
+  "entities": {
+    "Ticket": {
+      "title": "Ticket",
+      "type": "object",
+      "properties": {
+        "ticketNumber": { "type": "number" },
+        "subject": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string" },
+        "priority": { "type": "string", "enum": ["Low", "Normal", "High", "Urgent"] },
+        "channel": { "type": "string", "enum": ["Email", "Phone", "Walk-in", "WhatsApp"] },
+        "departmentId": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "divisionId": { "type": "string" },
+        "divisionName": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "campusId": { "type": "string" },
+        "campusName": { "type": "string" },
+        "gradeId": { "type": "string" },
+        "gradeName": { "type": "string" },
+        "createdBy": { "type": "object" },
+        "assignedTo": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "firstRespondedAt": { "type": "string", "format": "date-time" },
+        "messages": { "type": "array" },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["Admin", "Employee", "Manager"] },
+        "status": { "type": "string", "enum": ["Available", "Busy"] },
+        "departmentId": { "type": "string" },
+        "divisionId": { "type": "string" }
+      }
+    },
+    "SLASettings": {
+        "title": "SLA Settings",
+        "description": "Global settings for SLA response times per channel and priority.",
+        "type": "object"
+    },
+    "Division": {
+      "title": "Division",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "color": { "type": "string" }
+      }
+    },
+    "School": {
+      "title": "School",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      }
+    },
+    "Campus": {
+      "title": "Campus",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      }
+    },
+    "Grade": {
+      "title": "Grade",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      }
+    },
+    "PredefinedTag": {
+      "title": "Predefined Tag",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      }
+    }
+  },
+  "auth": {
+    "providers": ["password", "anonymous"]
+  },
+  "firestore": {
+    "/tickets/{ticketId}": { "schema": { "$ref": "#/entities/Ticket" }, "description": "Stores all tickets." },
+    "/users/{userId}": { "schema": { "$ref": "#/entities/UserProfile" }, "description": "Stores user profiles." },
+    "/settings/sla": { "schema": { "$ref": "#/entities/SLASettings" }, "description": "SLA response policies configuration." },
+    "/settings_tags/{tagId}": { "schema": { "$ref": "#/entities/PredefinedTag" }, "description": "Predefined tags for tickets." },
+    "/divisions/{divisionId}": { "schema": { "$ref": "#/entities/Division" }, "description": "Educational divisions." },
+    "/schools/{schoolId}": { "schema": { "$ref": "#/entities/School" }, "description": "School names." },
+    "/campuses/{campusId}": { "schema": { "$ref": "#/entities/Campus" }, "description": "School campuses." },
+    "/grades/{gradeId}": { "schema": { "$ref": "#/entities/Grade" }, "description": "Academic grades." }
+  }
+}
