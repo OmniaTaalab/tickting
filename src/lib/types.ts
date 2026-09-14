@@ -74,6 +74,8 @@ export type UserProfile = {
   departmentId?: string;
   divisionIds?: string[];
   schoolId?: string;
+  schoolIds?: string[];
+  gradeIds?: string[];
   campusIds?: string[]; // Changed from schoolIds to campusIds
   status?: UserStatus;
   currentSessionStartedAt?: Timestamp | string;

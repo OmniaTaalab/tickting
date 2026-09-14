@@ -50,10 +50,13 @@ export function AuthInitializer({ children }: { children: React.ReactNode }) {
           if (!hasSetAvailable.current) {
             try {
               // We only set them to available once per app mount to respect their choice if they manually toggle to busy later
-              await toggleUserStatusAction(user.uid, 'Available');
+              const result = await toggleUserStatusAction(user.uid, 'Available');
+              if (result && !result.success) {
+                console.warn("Auto-status update note:", result.message);
+              }
               hasSetAvailable.current = true;
             } catch (e) {
-              console.error("Auto-status update failed:", e);
+              console.warn("Auto-status update not available:", e);
             }
           }
 

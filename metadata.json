@@ -1,4 +1,7 @@
 {
-  "name": "studio-7708718228",
-  "description": "App imported from Firebase Studio"
+  "name": "NIS CRM Support",
+  "description": "Parent Care CRM & Support System",
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

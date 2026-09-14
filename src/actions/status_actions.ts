@@ -10,7 +10,9 @@ import { format } from 'date-fns';
  */
 export async function toggleUserStatusAction(userId: string, targetStatus: UserStatus) {
   const db = adminDb;
-  if (!db) throw new Error("Firebase Admin not configured");
+  if (!db) {
+    return { success: false, message: "Firebase Admin not configured" };
+  }
 
   const userRef = db.collection('users').doc(userId);
   const now = new Date();

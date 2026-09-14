@@ -15,8 +15,8 @@ type AssigneeProfile = Pick<UserProfile, 'id' | 'name' | 'avatarUrl' | 'email'>;
 export async function getRoundRobinAssignee(departmentId: string, campusId?: string | null): Promise<AssigneeProfile | null> {
     const db = adminDb;
     if (!db) {
-        console.error('getRoundRobinAssignee: Firestore Admin not initialized.');
-        throw new Error("Server configuration error.");
+        console.warn('getRoundRobinAssignee: Firestore Admin not initialized.');
+        return null;
     }
 
     const deptRef = db.collection('departments').doc(departmentId);

@@ -58,7 +58,7 @@ export function CreateUserLoginDialog({ user, isOpen, onClose }: CreateUserLogin
   });
 
   useEffect(() => {
-    if (state.success) {
+    if (state?.success) {
         toast({
             title: '✅ Login Created!',
             description: state.message,
@@ -90,12 +90,25 @@ export function CreateUserLoginDialog({ user, isOpen, onClose }: CreateUserLogin
 
         <Form {...form}>
           <form action={action} className="space-y-4">
-             {state.errors?.form && (
+             {state?.errors?.form && (
                 <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>Error</AlertTitle>
-                    <AlertDescription>
-                       {state.errors.form.join(', ')}
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <AlertTitle>Configuration Required</AlertTitle>
+                    <AlertDescription className="text-xs break-words mt-1">
+                       {state.errors.form.map((err, idx) => (
+                         <div key={idx} className="space-y-1">
+                           <p>{err}</p>
+                           {err.includes('https://console.developers.google.com') && (
+                             <a
+href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis.com/overview?project=${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}`}
+                               rel="noreferrer"
+                               className="inline-flex items-center gap-1 font-semibold underline bg-white/20 hover:bg-white/30 px-2 py-1 rounded text-white text-xs mt-1"
+                             >
+                               Enable Identity Toolkit API in Google Cloud ↗
+                             </a>
+                           )}
+                         </div>
+                       ))}
                     </AlertDescription>
                 </Alert>
             )}
