@@ -51,11 +51,8 @@ function normalizePrivateKey(key: string | undefined): string | null {
 
   return formatted;
 }
-
 function initializeFirebaseAdmin() {
-  if (admin.apps.length > 0) {
-    return;
-  }
+  if (admin.apps.length > 0) return;
 
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
@@ -63,54 +60,68 @@ function initializeFirebaseAdmin() {
     process.env.FIREBASE_PRIVATE_KEY
   );
 
-  const storageBucket =
-    process.env.FIREBASE_STORAGE_BUCKET ||
-    (projectId ? `${projectId}.firebasestorage.app` : undefined);
+  // 1. Explicit service account
+  if (projectId && clientEmail && privateKey) {
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
+        projectId,
+        storageBucket: `${projectId}.firebasestorage.app`,
+      });
 
-  /*
-   * IMPORTANT:
-   * Do NOT fall back to Google AI Studio's default credentials.
-   *
-   * All three values must belong to the same Firebase project.
-   */
- if (!projectId || !clientEmail || !privateKey) {
-  throw new Error(
-    `Firebase Admin config error:
-    PROJECT_ID=${projectId ? 'OK' : 'MISSING'},
-    CLIENT_EMAIL=${clientEmail ? 'OK' : 'MISSING'},
-    PRIVATE_KEY=${privateKey ? 'OK' : 'MISSING OR INVALID'}`
+      console.log(
+        `[FirebaseAdmin] Initialized using service account: ${projectId}`
+      );
+
+      return;
+    } catch (error: any) {
+      console.error(
+        '[FirebaseAdmin] Service account initialization failed:',
+        error?.message || error
+      );
+
+      return;
+    }
+  }
+
+  // 2. Firebase App Hosting
+  if (process.env.FIREBASE_CONFIG) {
+    try {
+      const firebaseConfig = JSON.parse(
+        process.env.FIREBASE_CONFIG
+      );
+
+      admin.initializeApp({
+        credential: admin.credential.applicationDefault(),
+        projectId: firebaseConfig.projectId,
+        storageBucket: firebaseConfig.storageBucket,
+      });
+
+      console.log(
+        `[FirebaseAdmin] Initialized using App Hosting credentials: ${firebaseConfig.projectId}`
+      );
+
+      return;
+    } catch (error: any) {
+      console.error(
+        '[FirebaseAdmin] App Hosting initialization failed:',
+        error?.message || error
+      );
+
+      return;
+    }
+  }
+
+  // Do NOT crash Next.js build
+  console.warn(
+    '[FirebaseAdmin] Firebase Admin credentials are not available in this environment.'
   );
 }
 
-  try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId,
-        clientEmail,
-        privateKey,
-      }),
-
-      projectId,
-
-      ...(storageBucket
-        ? { storageBucket }
-        : {}),
-    });
-
-    console.log(
-      `[FirebaseAdmin] Initialized successfully for project: ${projectId}`
-    );
-
-    console.log(
-      `[FirebaseAdmin] Service account: ${clientEmail}`
-    );
-  } catch (error: any) {
-    console.error(
-      '[FirebaseAdmin] Initialization failed:',
-      error?.message || error
-    );
-  }
-}
 
 initializeFirebaseAdmin();
 
