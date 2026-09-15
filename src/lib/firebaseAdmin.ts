@@ -51,8 +51,12 @@ function normalizePrivateKey(key: string | undefined): string | null {
 
   return formatted;
 }
+
 function initializeFirebaseAdmin() {
-  if (admin.apps.length > 0) return;
+  // Firebase Admin already initialized
+  if (admin.apps.length > 0) {
+    return;
+  }
 
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
@@ -70,7 +74,11 @@ function initializeFirebaseAdmin() {
           privateKey,
         }),
         projectId,
-        storageBucket: `${projectId}.firebasestorage.app`,
+
+        // Use env value if provided, otherwise use Firebase default
+        storageBucket:
+          process.env.FIREBASE_STORAGE_BUCKET ||
+          `${projectId}.firebasestorage.app`,
       });
 
       console.log(
@@ -116,23 +124,42 @@ function initializeFirebaseAdmin() {
     }
   }
 
-  // Do NOT crash Next.js build
   console.warn(
     '[FirebaseAdmin] Firebase Admin credentials are not available in this environment.'
   );
 }
-
 
 initializeFirebaseAdmin();
 
 if (admin.apps.length > 0) {
   try {
     adminAuth = admin.auth();
+  } catch (error: any) {
+    console.error(
+      '[FirebaseAdmin] Could not initialize Auth:',
+      error?.message || error
+    );
+  }
+
+  try {
     adminDb = admin.firestore();
+
+    // IMPORTANT:
+    // Do NOT call adminDb.settings() here.
+    // Next.js Fast Refresh can execute this module again after
+    // Firestore has already been used.
+  } catch (error: any) {
+    console.error(
+      '[FirebaseAdmin] Could not initialize Firestore:',
+      error?.message || error
+    );
+  }
+
+  try {
     adminStorage = admin.storage();
   } catch (error: any) {
     console.error(
-      '[FirebaseAdmin] Could not initialize Firebase services:',
+      '[FirebaseAdmin] Could not initialize Storage:',
       error?.message || error
     );
   }
@@ -143,4 +170,3 @@ export {
   adminDb,
   adminStorage,
 };
-

@@ -37,7 +37,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Phone, User, AlertCircle, Paperclip, FileText, Image as ImageIcon, X, UserCircle2, Globe, Hash, LayoutList, Type } from 'lucide-react';
 import { useFirebase, useUser, useCollection, useMemoFirebase, useDoc } from '@/firebase';
-import { collection, query, doc } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  doc,
+  getDocs
+} from 'firebase/firestore';
 import type { Department, Campus, School, Division, Grade, UserProfile } from '@/lib/types';
 import { Input } from '@/components/ui/input';
 import { createTicketAction } from '@/actions/ticket_create';
@@ -117,7 +122,41 @@ export default function NewTicketPage() {
     [firestore]
   );
   const { data: allGrades } = useCollection<Grade>(gradesQuery);
+useEffect(() => {
+  if (!firestore || !user) return;
 
+  const testFirestore = async () => {
+    console.log(
+      '🔥 CLIENT FIREBASE PROJECT:',
+      firestore.app.options.projectId
+    );
+
+    console.log('⏳ Starting campuses request...');
+
+    try {
+      const campusesSnap = await getDocs(
+        collection(firestore, 'campuses')
+      );
+
+      console.log('✅ Campuses request finished');
+      console.log('✅ Campuses count:', campusesSnap.size);
+
+      console.log(
+        '✅ Campuses data:',
+        campusesSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }))
+      );
+    } catch (error: any) {
+      console.error('❌ CAMPUSES ERROR CODE:', error?.code);
+      console.error('❌ CAMPUSES ERROR MESSAGE:', error?.message);
+      console.error('❌ FULL ERROR:', error);
+    }
+  };
+
+  testFirestore();
+}, [firestore, user]);
   const form = useForm<z.infer<typeof FormSchema>>({
     resolver: zodResolver(FormSchema),
     defaultValues: {
@@ -240,11 +279,11 @@ export default function NewTicketPage() {
         <CardContent className="p-8">
             <Form {...form}>
             <form action={handleSubmitAction} className="space-y-8">
-                {state.message && !state.success && (
+                {state?.message && !state?.success && (
                     <Alert variant="destructive" className="bg-red-50 border-red-200">
                         <AlertCircle className="h-4 w-4" />
                         <AlertTitle>Error</AlertTitle>
-                        <AlertDescription>{state.message}</AlertDescription>
+                        <AlertDescription>{state?.message}</AlertDescription>
                     </Alert>
                 )}
 

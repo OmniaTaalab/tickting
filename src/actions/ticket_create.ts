@@ -67,7 +67,10 @@ export async function createTicketAction(
 ): Promise<CreateTicketState> {
   const db = adminDb;
   const storage = adminStorage;
-  
+  console.log('🔥 Firebase Admin Check:', {
+  adminDbExists: !!adminDb,
+  adminStorageExists: !!adminStorage,
+});
   if (!db || !storage) {
     return {
       success: false,
@@ -190,17 +193,17 @@ export async function createTicketAction(
       departmentId,
       departmentName,
       schoolId,
-      schoolName: schoolNameValue, 
+      schoolName: schoolNameValue || 'N/A', 
       campusId,
-      campusName: campusNameValue, 
+      campusName: campusNameValue || 'N/A', 
       divisionId,
-      divisionName: divisionNameValue,
+      divisionName: divisionNameValue || 'N/A',
       gradeId,
-      gradeName: gradeNameValue,
+      gradeName: gradeNameValue || 'N/A',
       parentName,
       parentEmail,
       studentBlbId: studentBlbId || null,
-      mailboxEmail,
+      mailboxEmail: mailboxEmail || null,
       createdBy: {
         userId: staffId || `anon_${Date.now()}`,
         name: staffName || parentName,
@@ -211,7 +214,7 @@ export async function createTicketAction(
         userId: assignedUser.id,
         name: assignedUser.name,
         email: assignedUser.email || '',
-        avatarUrl: assignedUser.avatarUrl,
+        avatarUrl: assignedUser.avatarUrl || `https://api.dicebear.com/9.x/initials/svg?seed=${assignedUser.name.replace(/\s/g, '+')}`,
       } : null,
       assignedAt: assignedUser ? FieldValue.serverTimestamp() : null,
       createdAt: FieldValue.serverTimestamp(),
@@ -243,7 +246,12 @@ export async function createTicketAction(
         ticketId: docRef.id,
         ticketNumber,
         title,
-        category: categoryName,
+        category: departmentName,
+        departmentId: departmentId || null,
+        schoolId: schoolId || null,
+        campusId: campusId || null,
+        divisionId: divisionId || null,
+        gradeId: gradeId || null,
         channel,
         status,
         assignedTo: assignedUser ? assignedUser.name : null,
@@ -265,8 +273,11 @@ export async function createTicketAction(
     revalidatePath('/tickets');
     revalidatePath('/dashboard');
   } catch (error: any) {
+    if (error?.message === 'NEXT_REDIRECT' || error?.digest?.startsWith('NEXT_REDIRECT')) {
+      throw error;
+    }
     console.error('Error creating ticket:', error);
-    return { success: false, message: 'Database error while saving ticket.' };
+    return { success: false, message: error?.message || 'Database error while saving ticket.' };
   }
 
   if (newTicketId) {
