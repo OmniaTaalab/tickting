@@ -14,6 +14,8 @@ const UpdateUserSchema = z.object({
   departmentId: z.string().optional().nullable(), // Allow null for hidden fields
   divisionIds: z.array(z.string()).optional(),
   campusIds: z.array(z.string()).optional(),
+  schoolIds: z.array(z.string()).optional(),
+  gradeIds: z.array(z.string()).optional(),
   password: z.string().min(6, "Password must be at least 6 characters").optional().or(z.literal('')),
   actorId: z.string().min(1),
   actorName: z.string().min(1),
@@ -34,6 +36,8 @@ export type UpdateUserState = {
     departmentId?: string[];
     divisionIds?: string[];
     campusIds?: string[];
+    schoolIds?: string[];
+    gradeIds?: string[];
     form?: string[];
   };
   message?: string | null;
@@ -60,6 +64,8 @@ export async function updateUserAction(
     departmentId: formData.get('departmentId'),
     divisionIds: formData.getAll('divisionIds'),
     campusIds: formData.getAll('campusIds'),
+    schoolIds: formData.getAll('schoolIds'),
+    gradeIds: formData.getAll('gradeIds'),
     password: formData.get('password'),
     actorId: formData.get('actorId'),
     actorName: formData.get('actorName'),
@@ -74,7 +80,7 @@ export async function updateUserAction(
     };
   }
 
-  const { userId, name, role, departmentId, divisionIds, campusIds, password, actorId, actorName } = validatedFields.data;
+  const { userId, name, role, departmentId, divisionIds, campusIds, schoolIds, gradeIds, password, actorId, actorName } = validatedFields.data;
 
   try {
     const actorRef = adminDb.collection('users').doc(actorId);
@@ -126,22 +132,25 @@ export async function updateUserAction(
         delete updates.role; // Prevent role change if not admin
     }
 
-    if (departmentId && departmentId !== 'none' && role !== 'Admin') {
-        updates.departmentId = departmentId;
-    } else if (role === 'Admin') {
+    if (role === 'Admin') {
         updates.departmentId = FieldValue.delete();
-    }
-
-    if (divisionIds && divisionIds.length > 0 && role !== 'Admin') {
-        updates.divisionIds = divisionIds;
-    } else if (role === 'Admin') {
         updates.divisionIds = FieldValue.delete();
-    }
-
-    if (campusIds && campusIds.length > 0 && role !== 'Admin') {
-        updates.campusIds = campusIds;
-    } else if (role === 'Admin') {
         updates.campusIds = FieldValue.delete();
+        updates.schoolIds = FieldValue.delete();
+        updates.schoolId = FieldValue.delete();
+        updates.gradeIds = FieldValue.delete();
+    } else {
+        if (departmentId && departmentId !== 'none') {
+            updates.departmentId = departmentId;
+        } else {
+            updates.departmentId = FieldValue.delete();
+        }
+
+        updates.divisionIds = divisionIds || [];
+        updates.campusIds = campusIds || [];
+        updates.schoolIds = schoolIds || [];
+        updates.schoolId = (schoolIds && schoolIds.length > 0) ? schoolIds[0] : FieldValue.delete();
+        updates.gradeIds = gradeIds || [];
     }
     
     // 1. Update Firestore
@@ -168,7 +177,7 @@ export async function updateUserAction(
       message: `${actorName} updated the profile ${password ? 'and password ' : ''}for user ${name}.`,
       details: {
         targetUserId: userId,
-        updatedFields: { name, role, departmentId, divisionIds, campusIds, passwordUpdated: !!password }
+        updatedFields: { name, role, departmentId, divisionIds, campusIds, schoolIds, gradeIds, passwordUpdated: !!password }
       }
     });
 

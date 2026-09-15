@@ -1,6 +1,6 @@
 
 'use client';
-import { useState, useMemo, useEffect, useTransition, memo, Suspense } from 'react';
+import { useState, useMemo, useEffect, useTransition, useCallback, memo, Suspense, useRef } from 'react';
 import {
   Card,
   CardContent,
@@ -22,9 +22,12 @@ import { DateRange } from "react-day-picker";
 import { cn } from '@/lib/utils';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Zap, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
 import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
+import { useToast } from '@/hooks/use-toast';
+import { assignQueuedTicketsAction } from '@/actions/ticket_assignment';
+
 
 const toDate = (ts: any): Date | null => {
   if (!ts) return null;
@@ -39,6 +42,133 @@ const toDate = (ts: any): Date | null => {
   }
 };
 
+const TICKETS_FILTER_STORAGE_KEY = 'nis_tickets_filter_state_v2';
+const TICKETS_COLUMNS_STORAGE_KEY = 'nis_tickets_visible_columns_v2';
+
+const defaultFilters = {
+  search: '',
+  departmentId: '',
+  status: '' as TicketStatus | '',
+  channel: '' as TicketChannel | '',
+  sla: 'all' as SLAFilterValue,
+  dateRange: undefined as DateRange | undefined,
+};
+
+function readStoredFilters(slaParam: SLAFilterValue | null) {
+  if (typeof window === 'undefined') {
+    return { ...defaultFilters, sla: slaParam || 'all' };
+  }
+
+  try {
+    // 1. Check URL query parameters first (e.g. if shared or returned via URL)
+    const urlParams = new URLSearchParams(window.location.search);
+    const qSearch = urlParams.get('search');
+    const qDept = urlParams.get('category') || urlParams.get('departmentId');
+    const qStatus = urlParams.get('status');
+    const qChannel = urlParams.get('channel');
+    const qSla = urlParams.get('sla');
+    const qFrom = urlParams.get('from');
+    const qTo = urlParams.get('to');
+
+    // 2. Check localStorage, then fallback to sessionStorage
+    const saved = localStorage.getItem(TICKETS_FILTER_STORAGE_KEY) || sessionStorage.getItem(TICKETS_FILTER_STORAGE_KEY);
+    let parsed: any = null;
+    if (saved) {
+      try {
+        parsed = JSON.parse(saved);
+      } catch (e) {}
+    }
+
+    const searchVal = qSearch !== null ? qSearch : (typeof parsed?.search === 'string' ? parsed.search : '');
+    const deptVal = qDept !== null ? qDept : (typeof parsed?.departmentId === 'string' ? parsed.departmentId : '');
+    const statusVal = qStatus !== null ? qStatus : (typeof parsed?.status === 'string' ? parsed.status : '');
+    const channelVal = qChannel !== null ? qChannel : (typeof parsed?.channel === 'string' ? parsed.channel : '');
+    const slaVal = (qSla as SLAFilterValue) || slaParam || (parsed?.sla as SLAFilterValue) || 'all';
+
+    let dateRange: DateRange | undefined = undefined;
+    if (qFrom) {
+      const fromDate = new Date(qFrom);
+      const toDate = qTo ? new Date(qTo) : undefined;
+      if (!isNaN(fromDate.getTime())) {
+        dateRange = {
+          from: fromDate,
+          to: toDate && !isNaN(toDate.getTime()) ? toDate : undefined,
+        };
+      }
+    } else if (parsed?.dateRange?.from) {
+      const fromDate = new Date(parsed.dateRange.from);
+      const toDate = parsed.dateRange.to ? new Date(parsed.dateRange.to) : undefined;
+      if (!isNaN(fromDate.getTime())) {
+        dateRange = {
+          from: fromDate,
+          to: toDate && !isNaN(toDate.getTime()) ? toDate : undefined,
+        };
+      }
+    }
+
+    return {
+      search: searchVal,
+      departmentId: deptVal,
+      status: (statusVal || '') as TicketStatus | '',
+      channel: (channelVal || '') as TicketChannel | '',
+      sla: slaVal,
+      dateRange,
+    };
+  } catch (e) {
+    console.error('Error reading stored ticket filters:', e);
+  }
+
+  return { ...defaultFilters, sla: slaParam || 'all' };
+}
+
+function readStoredPage(): number {
+  if (typeof window === 'undefined') return 1;
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const qPage = urlParams.get('page');
+    if (qPage && !isNaN(Number(qPage))) {
+      return Math.max(1, Number(qPage));
+    }
+    const saved = localStorage.getItem(TICKETS_FILTER_STORAGE_KEY) || sessionStorage.getItem(TICKETS_FILTER_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (typeof parsed.currentPage === 'number' && parsed.currentPage > 0) {
+        return parsed.currentPage;
+      }
+    }
+  } catch (e) {}
+  return 1;
+}
+
+const defaultVisibleColumns: Record<ColumnId, boolean> = {
+  id: true,
+  details: true,
+  date: true,
+  assignedTo: true,
+  priority: true,
+  status: true,
+  channel: true,
+  division: true,
+  campus: true,
+  slaStatus: true,
+  tags: true,
+  lastUpdated: true,
+  resolvedAt: false,
+  closedAt: false,
+  firstResponse: true,
+};
+
+function readStoredColumns(): Record<ColumnId, boolean> {
+  if (typeof window === 'undefined') return defaultVisibleColumns;
+  try {
+    const saved = localStorage.getItem(TICKETS_COLUMNS_STORAGE_KEY);
+    if (saved) {
+      return { ...defaultVisibleColumns, ...JSON.parse(saved) };
+    }
+  } catch (e) {}
+  return defaultVisibleColumns;
+}
+
 const MemoizedTicketList = memo(TicketList);
 const MemoizedTicketFilters = memo(TicketFilters);
 
@@ -48,16 +178,9 @@ function TicketsContent() {
   const { t } = useLanguage();
 
   const [isPending, startTransition] = useTransition();
-  const [filters, setFilters] = useState({
-    search: '',
-    departmentId: '',
-    status: '' as TicketStatus | '',
-    channel: '' as TicketChannel | '',
-    sla: (slaParam || 'all') as SLAFilterValue,
-    dateRange: undefined as DateRange | undefined,
-  });
-
-  const [currentPage, setCurrentPage] = useState(1);
+  const [filters, setFilters] = useState(() => readStoredFilters(slaParam));
+  const [currentPage, setCurrentPage] = useState(() => readStoredPage());
+  const [visibleColumns, setVisibleColumns] = useState<Record<ColumnId, boolean>>(() => readStoredColumns());
   const ITEMS_PER_PAGE = 50;
 
   const [now, setNow] = useState(new Date());
@@ -67,42 +190,114 @@ function TicketsContent() {
     return () => clearInterval(timer);
   }, []);
 
+  // Persist filter state and page to both localStorage and sessionStorage + sync URL
+  useEffect(() => {
+    try {
+      const fromIso = filters.dateRange?.from
+        ? (filters.dateRange.from instanceof Date ? filters.dateRange.from.toISOString() : new Date(filters.dateRange.from).toISOString())
+        : null;
+      const toIso = filters.dateRange?.to
+        ? (filters.dateRange.to instanceof Date ? filters.dateRange.to.toISOString() : new Date(filters.dateRange.to).toISOString())
+        : null;
+
+      const dataToSave = JSON.stringify({
+        search: filters.search,
+        departmentId: filters.departmentId,
+        status: filters.status,
+        channel: filters.channel,
+        sla: filters.sla,
+        dateRange: fromIso ? { from: fromIso, to: toIso } : null,
+        currentPage,
+      });
+
+      sessionStorage.setItem(TICKETS_FILTER_STORAGE_KEY, dataToSave);
+      localStorage.setItem(TICKETS_FILTER_STORAGE_KEY, dataToSave);
+
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams();
+        if (filters.search) params.set('search', filters.search);
+        if (filters.departmentId) params.set('category', filters.departmentId);
+        if (filters.status) params.set('status', filters.status);
+        if (filters.channel) params.set('channel', filters.channel);
+        if (filters.sla && filters.sla !== 'all') params.set('sla', filters.sla);
+        if (fromIso) params.set('from', fromIso);
+        if (toIso) params.set('to', toIso);
+        if (currentPage > 1) params.set('page', String(currentPage));
+
+        const queryStr = params.toString();
+        const newUrl = queryStr ? `${window.location.pathname}?${queryStr}` : window.location.pathname;
+        window.history.replaceState(null, '', newUrl);
+      }
+    } catch (e) {
+      console.error('Failed to save ticket filter state:', e);
+    }
+  }, [filters, currentPage]);
+
   useEffect(() => {
     if (slaParam && slaParam !== filters.sla) {
-        setFilters(prev => ({ ...prev, sla: slaParam }));
+      setFilters(prev => ({ ...prev, sla: slaParam }));
+      setCurrentPage(1);
     }
   }, [slaParam]);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [filters]);
-
-  const [visibleColumns, setVisibleColumns] = useState<Record<ColumnId, boolean>>({
-    id: true,
-    details: true,
-    date: true,
-    assignedTo: true,
-    priority: true,
-    status: true,
-    channel: true,
-    division: true,
-    campus: true,
-    slaStatus: true,
-    tags: true,
-    lastUpdated: true,
-    resolvedAt: false,
-    closedAt: false,
-    firstResponse: true,
-  });
+  const handleVisibleColumnsChange = (updater: React.SetStateAction<Record<ColumnId, boolean>>) => {
+    setVisibleColumns(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(TICKETS_COLUMNS_STORAGE_KEY, JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
 
   const { user, isUserLoading } = useUser();
   const { firestore } = useFirebase();
+  const { toast } = useToast();
+  const [isAutoAssigning, startAutoAssignTransition] = useTransition();
 
   const userProfileRef = useMemoFirebase(() =>
     user && firestore ? doc(firestore, 'users', user.uid) : null,
     [user, firestore]
   );
   const { data: userProfile, isLoading: isProfileLoading } = useDoc<UserProfile>(userProfileRef);
+
+  const handleAutoAssignQueue = useCallback(() => {
+    startAutoAssignTransition(async () => {
+      toast({
+        title: t('assigningQueue'),
+        description: t('autoAssignQueueDesc'),
+      });
+      try {
+        const deptId = userProfile?.role === 'Manager' ? userProfile?.departmentId : undefined;
+        const res = await assignQueuedTicketsAction(deptId);
+        if (res.success && res.assignedCount > 0) {
+          const names = res.assignments.map(a => `#${a.ticketNumber || a.ticketId.slice(0, 4)} → ${a.assigneeName}`).join(', ');
+          toast({
+            title: '⚡ ' + t('queueAssignedSuccess').replace('{{count}}', String(res.assignedCount)),
+            description: names,
+          });
+        } else if (res.success && res.assignedCount === 0) {
+          toast({
+            title: t('noQueuedTickets'),
+            description: res.message || t('noAgentsAvailable'),
+          });
+        } else {
+          toast({
+            variant: 'destructive',
+            title: 'Error',
+            description: res.message,
+          });
+        }
+      } catch (err: any) {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: err?.message || 'Assignment failed',
+        });
+      }
+    });
+  }, [userProfile, toast, t]);
+
 
   const slaRef = useMemoFirebase(() => (firestore ? doc(firestore, 'settings', 'sla') : null), [firestore]);
   const { data: savedSLA } = useDoc<SLASettings>(slaRef);
@@ -174,12 +369,16 @@ function TicketsContent() {
       });
     }
     if (filters.dateRange?.from) {
-      const start = startOfDay(filters.dateRange.from!);
-      const end = filters.dateRange.to ? endOfDay(filters.dateRange.to) : endOfDay(filters.dateRange.from!);
-      result = result.filter(t => {
-        const created = toDate(t.createdAt);
-        return created && created >= start && created <= end;
-      });
+      const validFrom = new Date(filters.dateRange.from);
+      if (!isNaN(validFrom.getTime())) {
+        const start = startOfDay(validFrom);
+        const validTo = filters.dateRange.to ? new Date(filters.dateRange.to) : null;
+        const end = (validTo && !isNaN(validTo.getTime())) ? endOfDay(validTo) : endOfDay(validFrom);
+        result = result.filter(t => {
+          const created = toDate(t.createdAt);
+          return created && created >= start && created <= end;
+        });
+      }
     }
     if (filters.sla !== 'all') {
       result = result.filter(t => {
@@ -242,6 +441,30 @@ function TicketsContent() {
     };
   }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
 
+  // Background auto-assignment: when an available agent is active and queued tickets exist, auto-assign periodically
+  const lastAutoAssignRef = useRef<number>(0);
+  useEffect(() => {
+    const queuedCount = statusCounts?.Queue || 0;
+    if (queuedCount > 0 && userProfile?.status === 'Available' && !isAutoAssigning) {
+      const nowMs = Date.now();
+      if (nowMs - lastAutoAssignRef.current > 30000) {
+        lastAutoAssignRef.current = nowMs;
+        const deptId = userProfile?.role === 'Manager' ? userProfile?.departmentId : undefined;
+        assignQueuedTicketsAction(deptId)
+          .then(res => {
+            if (res.success && res.assignedCount > 0) {
+              const names = res.assignments.map(a => `#${a.ticketNumber || a.ticketId.slice(0, 4)} → ${a.assigneeName}`).join(', ');
+              toast({
+                title: '⚡ ' + t('queueAssignedSuccess').replace('{{count}}', String(res.assignedCount)),
+                description: names,
+              });
+            }
+          })
+          .catch(e => console.warn('Background auto-assign note:', e));
+      }
+    }
+  }, [statusCounts?.Queue, userProfile?.status, userProfile?.departmentId, userProfile?.role, isAutoAssigning, toast, t]);
+
   const sortedAndFilteredTickets = useMemo(() => {
     if (!roleFilteredTickets) return null;
     const base = applyFilters(roleFilteredTickets);
@@ -262,17 +485,21 @@ function TicketsContent() {
     return sortedAndFilteredTickets.slice(start, start + ITEMS_PER_PAGE);
   }, [sortedAndFilteredTickets, currentPage]);
 
-  const handleFilterChange = (newFilters: any) => {
+  const handleFilterChange = useCallback((newFilters: any) => {
     startTransition(() => {
       setFilters(prev => ({ ...prev, ...newFilters }));
+      setCurrentPage(1);
     });
-  };
+  }, []);
 
   const isLoading = isUserLoading || isProfileLoading || areDepartmentsLoading || areTicketsLoading;
 
   const departmentsForFilter = useMemo(() => {
-    if (!allDepartments || !userProfile) return [];
-    if (userProfile.role === 'Manager') return allDepartments.filter(d => d.id === userProfile.departmentId);
+    if (!allDepartments) return [];
+    if (userProfile?.role === 'Manager' && userProfile?.departmentId) {
+      const myDept = allDepartments.filter(d => d.id === userProfile.departmentId);
+      return myDept.length > 0 ? myDept : allDepartments;
+    }
     return allDepartments;
   }, [allDepartments, userProfile]);
 
@@ -285,16 +512,55 @@ function TicketsContent() {
         </CardDescription>
       </CardHeader>
       <CardContent className="p-4 space-y-4">
+        {statusCounts?.Queue !== undefined && statusCounts.Queue > 0 && (
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-300/40 rounded-xl">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-amber-500/15 text-amber-700">
+                <Zap className="h-4 w-4 fill-amber-500 text-amber-600 animate-pulse" />
+              </div>
+              <div>
+                <p className="text-xs font-black text-amber-900 tracking-tight flex items-center gap-2">
+                  <span>{statusCounts.Queue} {t('queue')}</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 uppercase tracking-widest">
+                    Round-Robin
+                  </span>
+                </p>
+                <p className="text-[11px] font-medium text-amber-700/90">
+                  {t('autoAssignQueueDesc')}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={handleAutoAssignQueue}
+              disabled={isAutoAssigning}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-8 px-3.5 rounded-lg shadow-sm gap-1.5 transition-all shrink-0"
+            >
+              {isAutoAssigning ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>{t('assigningQueue')}</span>
+                </>
+              ) : (
+                <>
+                  <Zap className="h-3.5 w-3.5 fill-current" />
+                  <span>{t('autoAssignQueue')}</span>
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
         {isLoading ? (
           <Skeleton className="h-10 w-full" />
         ) : (
           <MemoizedTicketFilters
-            departments={departmentsForFilter}
-            showDepartmentFilter={userProfile?.role === 'Admin'}
+            departments={departmentsForFilter.length > 0 ? departmentsForFilter : (allDepartments || [])}
+            showDepartmentFilter={true}
             values={filters}
             onFilterChange={handleFilterChange}
             visibleColumns={visibleColumns}
-            onVisibleColumnsChange={setVisibleColumns}
+            onVisibleColumnsChange={handleVisibleColumnsChange}
             data={sortedAndFilteredTickets || []}
             statusCounts={statusCounts}
           />

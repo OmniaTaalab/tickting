@@ -152,13 +152,16 @@ export type Ticket = {
 export type SystemLog = {
     id: string;
     eventType: string;
-    actor: {
-        userId: string;
-        name: string;
+    actor?: {
+        userId?: string;
+        name?: string;
     };
+    userId?: string;
+    userName?: string;
+    userEmail?: string;
     message: string;
     details?: Record<string, any>;
-    timestamp: Timestamp;
+    timestamp: Timestamp | any;
 }
 
 export type TicketEvent = {

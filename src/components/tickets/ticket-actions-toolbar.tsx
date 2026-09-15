@@ -100,7 +100,6 @@ export function TicketActionsToolbar({
           <SelectItem value="Open">{t('open')}</SelectItem>
           <SelectItem value="In Progress">{t('inProgress')}</SelectItem>
           <SelectItem value="Resolved">{t('resolved')}</SelectItem>
-          <SelectItem value="Closed">{t('closed')}</SelectItem>
           <SelectItem value="Queue">{t('queue')}</SelectItem>
           <SelectItem value="Duplicate">{t('duplicate')}</SelectItem>
         </SelectContent>

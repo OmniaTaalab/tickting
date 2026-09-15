@@ -21,6 +21,7 @@ import {
   BarChart3,
   Users2,
   Settings,
+  ScrollText,
   LogOut,
   AlertTriangle,
   PlusCircle,
@@ -288,6 +289,17 @@ export function SidebarNav() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+
+              {userProfile?.role === 'Admin' && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/system-log'} tooltip={t('systemLog')}>
+                    <Link href="/system-log" className="gap-3">
+                      <ScrollText className="h-4 w-4" />
+                      <span className="font-semibold text-slate-700">{t('systemLog')}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroup>
         )}

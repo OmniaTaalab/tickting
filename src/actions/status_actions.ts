@@ -4,6 +4,8 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { UserStatus } from '@/lib/types';
 import { format } from 'date-fns';
+import { autoAssignQueuedTickets } from './ticket_assignment';
+import { logSystemEvent } from '@/lib/system-log';
 
 /**
  * Toggles user status between 'Available' and 'Busy' and manages work sessions atomically.
@@ -17,6 +19,8 @@ export async function toggleUserStatusAction(userId: string, targetStatus: UserS
   const userRef = db.collection('users').doc(userId);
   const now = new Date();
   const dateKey = format(now, 'yyyy-MM-dd');
+  let userDepartmentId: string | undefined = undefined;
+  let changedUserName: string = 'Staff';
 
   try {
     await db.runTransaction(async (transaction) => {
@@ -24,8 +28,10 @@ export async function toggleUserStatusAction(userId: string, targetStatus: UserS
       if (!userDoc.exists) return;
 
       const userData = userDoc.data()!;
+      changedUserName = userData.name || 'Staff';
       const currentStatus = userData.status || 'Busy';
       const departmentId = userData.departmentId || null;
+      userDepartmentId = departmentId || undefined;
 
       // Duplicate prevention
       if (currentStatus === targetStatus) return;
@@ -78,6 +84,22 @@ export async function toggleUserStatusAction(userId: string, targetStatus: UserS
         });
       }
     });
+
+    await logSystemEvent({
+      eventType: 'USER_STATUS_CHANGED',
+      actor: { userId, name: changedUserName },
+      message: `${changedUserName} changed presence status to "${targetStatus}".`,
+      details: { userId, status: targetStatus, departmentId: userDepartmentId },
+    });
+
+    // When an agent becomes Available, automatically trigger round-robin assignment for queued tickets
+    if (targetStatus === 'Available') {
+      try {
+        await autoAssignQueuedTickets({ departmentId: userDepartmentId });
+      } catch (autoAssignErr) {
+        console.warn("Background auto-assignment on status change:", autoAssignErr);
+      }
+    }
 
     return { success: true };
   } catch (error: any) {

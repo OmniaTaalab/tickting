@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import type { TicketStatus, UserProfile } from '@/lib/types';
 import { FieldValue } from 'firebase-admin/firestore';
 import { headers } from 'next/headers';
+import { logSystemEvent } from '@/lib/system-log';
 
 type ActionState = {
     success: boolean;
@@ -111,6 +112,18 @@ export async function bulkUpdateTicketsAction(
     });
     
     await batch.commit();
+
+    await logSystemEvent({
+      eventType: 'TICKET_BULK_UPDATE',
+      actor: { userId: 'admin', name: 'Admin/Manager' },
+      message: `Bulk updated ${ticketIds.length} ticket(s)${status ? ` (Status: ${status})` : ''}${newAssignee ? ` (Assigned to: ${newAssignee.name})` : ''}.`,
+      details: {
+        ticketIds,
+        ticketCount: ticketIds.length,
+        status: status || null,
+        assignedTo: newAssignee?.name || null,
+      },
+    });
 
     if (newAssignee && assigneeId !== 'unassigned') {
         for (const tid of ticketIds) {

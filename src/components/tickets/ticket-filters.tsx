@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import type { Department, TicketStatus, Ticket, TicketChannel } from '@/lib/types';
 import { Button } from '../ui/button';
-import { ListFilter, Download, Calendar as CalendarIcon, Search, X } from 'lucide-react';
+import { ListFilter, Download, Calendar as CalendarIcon, Search, X, RotateCcw } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import {
@@ -183,6 +183,34 @@ export function TicketFilters({
 
     XLSX.writeFile(workbook, `Tickets_Report_${format(new Date(), 'yyyy-MM-dd_HHmm')}.xlsx`);
   };
+
+  const hasActiveFilters = Boolean(
+    localSearch ||
+    values.search ||
+    values.departmentId ||
+    values.status ||
+    values.channel ||
+    (values.sla && values.sla !== 'all') ||
+    values.dateRange?.from
+  );
+
+  const handleClearFilters = () => {
+    setLocalSearch('');
+    try {
+      sessionStorage.removeItem('nis_tickets_filter_state_v2');
+      localStorage.removeItem('nis_tickets_filter_state_v2');
+      sessionStorage.removeItem('nis_tickets_filter_state');
+      localStorage.removeItem('nis_tickets_filter_state');
+    } catch (e) {}
+    onFilterChange({
+      search: '',
+      departmentId: '',
+      status: '',
+      channel: '',
+      sla: 'all',
+      dateRange: undefined,
+    });
+  };
   
   return (
     <div className="flex flex-col gap-3 rounded-xl bg-slate-100/50 border p-3">
@@ -218,7 +246,7 @@ export function TicketFilters({
                 { id: 'In Progress', label: t('inProgress'), count: statusCounts?.['In Progress'] },
                 { id: 'Waiting', label: t('waiting'), count: statusCounts?.Waiting },
                 { id: 'Resolved', label: t('resolved'), count: statusCounts?.Resolved },
-                { id: 'Closed', label: t('closed'), count: statusCounts?.Closed },
+                ...(statusCounts?.Closed ? [{ id: 'Closed', label: t('closed'), count: statusCounts?.Closed }] : []),
                 { id: 'Queue', label: t('queue'), count: statusCounts?.Queue },
                 { id: 'Duplicate', label: t('duplicate'), count: statusCounts?.Duplicate },
               ].map((tab) => (
@@ -251,18 +279,18 @@ export function TicketFilters({
                 variant={"outline"}
                 className={cn(
                   "w-full sm:w-auto min-w-[200px] justify-start text-left font-bold h-10 bg-white border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm rounded-xl",
-                  !values.dateRange && "text-muted-foreground"
+                  !values.dateRange?.from && "text-muted-foreground"
                 )}
               >
                 <CalendarIcon className="me-2 h-4 w-4 text-slate-400" />
                 {values.dateRange?.from ? (
                   values.dateRange.to ? (
                     <>
-                      {format(values.dateRange.from, "LLL dd, y")} -{" "}
-                      {format(values.dateRange.to, "LLL dd, y")}
+                      {format(new Date(values.dateRange.from), "LLL dd, y")} -{" "}
+                      {format(new Date(values.dateRange.to), "LLL dd, y")}
                     </>
                   ) : (
-                    format(values.dateRange.from, "LLL dd, y")
+                    format(new Date(values.dateRange.from), "LLL dd, y")
                   )
                 ) : (
                   <span>{t('anyDate')}</span>
@@ -273,8 +301,11 @@ export function TicketFilters({
               <Calendar
                 initialFocus
                 mode="range"
-                defaultMonth={values.dateRange?.from}
-                selected={values.dateRange}
+                defaultMonth={values.dateRange?.from ? new Date(values.dateRange.from) : undefined}
+                selected={values.dateRange?.from ? {
+                  from: new Date(values.dateRange.from),
+                  to: values.dateRange.to ? new Date(values.dateRange.to) : undefined,
+                } : undefined}
                 onSelect={(val) => onFilterChange({ dateRange: val })}
                 numberOfMonths={2}
               />
@@ -354,6 +385,18 @@ export function TicketFilters({
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {hasActiveFilters && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClearFilters}
+              className="h-10 rounded-xl gap-1.5 font-bold text-xs uppercase tracking-tight border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:text-rose-700 shadow-sm transition-colors"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>{t('clearFilters')}</span>
+            </Button>
+          )}
         </div>
       </div>
     </div>

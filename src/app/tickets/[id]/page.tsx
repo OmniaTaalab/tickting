@@ -51,6 +51,7 @@ import { requestTicketTransferAction } from '@/actions/ticket_request_transfer';
 import { requestTicketReassignmentAction } from '@/actions/ticket_request_reassign';
 import { reassignTicketAction } from '@/actions/ticket_reassign';
 import { deleteTicketMessageAction } from '@/actions/ticket_message_delete';
+import { updateTicketStatusAction } from '@/actions/ticket_status_action';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -556,6 +557,7 @@ function ManageTagsDialog({
 
 export default function TicketDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const ticketId = params.id as string;
   const { firestore } = useFirebase();
   const { user: currentUser } = useAuthUser();
@@ -617,6 +619,15 @@ export default function TicketDetailPage() {
       
       setDocumentNonBlocking(ticketRef, updates, { merge: true });
       toast({ title: t('statusUpdated'), description: t('statusSetTo', { status: t(newStatus.toLowerCase()) || newStatus }) });
+
+      // Record in system audit action log
+      const actorInfo = {
+        userId: user?.uid || 'unknown',
+        name: userProfile?.name || user?.displayName || 'Staff'
+      };
+      updateTicketStatusAction(ticket.id, newStatus, actorInfo).catch(err => {
+        console.warn('Action log status note:', err);
+      });
   };
 
   const handleVerify = () => {
@@ -719,7 +730,19 @@ export default function TicketDetailPage() {
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
           <div className="space-y-4 text-start font-body">
               <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
-                  <Link href="/tickets" className="hover:text-primary flex items-center gap-1 transition-colors">{isRTL ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />} {t('ticketsPageTitle')}</Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined' && window.history.length > 1) {
+                        router.back();
+                      } else {
+                        router.push('/tickets');
+                      }
+                    }}
+                    className="hover:text-primary flex items-center gap-1 transition-colors cursor-pointer text-slate-400 hover:text-slate-800 font-medium bg-transparent border-0 p-0"
+                  >
+                    {isRTL ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />} {t('ticketsPageTitle')}
+                  </button>
                   <span>/</span><span className="text-slate-900 font-bold uppercase tracking-wider">T-{ticket.ticketNumber || ticket.id.substring(0,4)}</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -778,10 +801,7 @@ export default function TicketDetailPage() {
             <Card className="border-none shadow-sm overflow-hidden rounded-2xl bg-white">
                 <CardHeader className="p-6 pb-2 text-start"><CardTitle className="text-xs font-black text-slate-900 uppercase tracking-widest">{t('actions')}</CardTitle></CardHeader>
                 <CardContent className="p-6 space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                        <Button variant="outline" className="h-10 border-emerald-100 text-emerald-700 text-xs font-bold" onClick={() => updateTicketStatus('Resolved')}><Check className="h-3.5 w-3.5" /> {t('resolve')}</Button>
-                        <Button variant="outline" className="h-10 border-slate-100 text-slate-600 text-xs font-bold" onClick={() => updateTicketStatus('Closed')}><X className="h-3.5 w-3.5" /> {t('close')}</Button>
-                    </div>
+                    <Button variant="outline" className="w-full h-10 border-emerald-100 text-emerald-700 text-xs font-bold" onClick={() => updateTicketStatus('Resolved')}><Check className="h-3.5 w-3.5" /> {t('resolve')}</Button>
                     <div className="grid grid-cols-2 gap-3">
                         <Button variant="outline" className="h-10 border-blue-100 text-blue-700 text-xs font-bold" onClick={() => updateTicketStatus('Open')}><Inbox className="h-3.5 w-3.5" /> {t('open')}</Button>
                         <Button variant="outline" className="h-10 border-purple-100 text-purple-700 text-xs font-bold" onClick={() => updateTicketStatus('Queue')}><LayoutList className="h-3.5 w-3.5" /> {t('queue')}</Button>

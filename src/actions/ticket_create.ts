@@ -8,6 +8,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { getRoundRobinAssignee } from './ticket_assignment';
 import { isWithinWorkingHours } from '@/lib/working-hours-utils';
+import { logSystemEvent } from '@/lib/system-log';
 
 const FormSchema = z.object({
   title: z.string().min(3, 'Title is required.').max(100, 'Title cannot exceed 100 characters.'),
@@ -233,6 +234,21 @@ export async function createTicketAction(
 
     const docRef = await db.collection('tickets').add(ticketPayload);
     newTicketId = docRef.id;
+
+    await logSystemEvent({
+      eventType: 'TICKET_CREATED',
+      actor: { userId: staffId || 'visitor', name: staffName || parentName },
+      message: `Ticket #${ticketNumber} "${title}" created by ${staffName || parentName} (${assignedUser ? `Assigned to ${assignedUser.name}` : 'Placed in Queue'}).`,
+      details: {
+        ticketId: docRef.id,
+        ticketNumber,
+        title,
+        category: categoryName,
+        channel,
+        status,
+        assignedTo: assignedUser ? assignedUser.name : null,
+      },
+    });
 
     if (assignedUser) {
       await db.collection('ticket-events').add({

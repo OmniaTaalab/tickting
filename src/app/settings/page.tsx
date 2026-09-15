@@ -25,7 +25,8 @@ import { EmployeeManagement } from "./_components/employee-management";
 import { SLAPolicies } from "./_components/sla-policies";
 import { DepartmentWorkingHours } from "./_components/working-hours";
 import { AfterHoursEmailSettingsPanel } from "./_components/after-hours-email-settings";
-import { Building2, Users2, LayoutGrid, ShieldCheck, Clock8, Tags, Clock, Mail } from "lucide-react";
+import { ActionLogTab } from "./_components/action-log-tab";
+import { Building2, Users2, LayoutGrid, ShieldCheck, Clock8, Tags, Clock, Mail, ScrollText } from "lucide-react";
 
 export default function SettingsPage() {
     const { user: currentUser, isUserLoading } = useUser();
@@ -128,6 +129,15 @@ export default function SettingsPage() {
                 <Mail className="h-4 w-4" />
                 {t('afterHoursEmail')}
             </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger 
+                  value="system-log" 
+                  className="data-[state=active]:bg-[#1e3a8a] data-[state=active]:text-white data-[state=active]:shadow-sm px-6 gap-2 transition-all font-bold text-xs uppercase tracking-tight"
+              >
+                  <ScrollText className="h-4 w-4" />
+                  {t('systemLog')}
+              </TabsTrigger>
+            )}
         </TabsList>
 
         {/* BRANCHES SETTINGS TAB */}
@@ -227,6 +237,13 @@ export default function SettingsPage() {
         <TabsContent value="after-hours-email" className="animate-in fade-in-50 duration-500">
             <AfterHoursEmailSettingsPanel />
         </TabsContent>
+
+        {/* SYSTEM LOG TAB - ADMIN ONLY */}
+        {isAdmin && (
+          <TabsContent value="system-log" className="animate-in fade-in-50 duration-500">
+              <ActionLogTab />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

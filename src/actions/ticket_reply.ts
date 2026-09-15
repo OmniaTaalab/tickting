@@ -240,6 +240,19 @@ export async function addTicketReplyAction(
 
         await ticketRef.update(updates);
         
+        await logSystemEvent({
+            eventType: isInternal ? 'INTERNAL_NOTE_ADDED' : 'TICKET_REPLIED',
+            actor: { userId, name: replierName },
+            message: `${replierName} ${isInternal ? 'added an internal note to' : 'replied to'} Ticket #${ticketData.ticketNumber || ticketId.substring(0, 4)}.`,
+            details: {
+                ticketId,
+                ticketNumber: ticketData.ticketNumber,
+                isInternal,
+                hasAttachments: newAttachments.length > 0,
+                newStatus: updates.status || ticketData.status,
+            }
+        });
+
         // Notify current assignee or log the auto-assignment
         if (ticketData.status === 'Queue' && !isExternal) {
              await logSystemEvent({
