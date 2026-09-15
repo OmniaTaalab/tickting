@@ -230,7 +230,7 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                         <div className="space-y-1.5">
                             <Label htmlFor="divisionIds" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Divisions <span className="text-destructive">*</span></Label>
                             {selectedDivs.map(id => <input key={id} type="hidden" name="divisionIds" value={id} />)}
-                            <Popover>
+<Popover modal={true}>
                                 <PopoverTrigger asChild>
                                     <Button 
                                         type="button"
@@ -259,8 +259,10 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                         <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                                     </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[240px] p-0" align="start">
-                                    <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
+<PopoverContent
+  className="w-[240px] p-0 z-[100] pointer-events-auto"
+  align="start"
+>                                    <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
                                         {divisions && divisions.length > 0 ? (
                                             divisions.map((div) => (
                                                 <div 
@@ -321,7 +323,7 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                     <div className="space-y-1.5">
                         <Label htmlFor="campusIds" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Campuses <span className="text-destructive">*</span></Label>
                         {selectedCampuses.map(id => <input key={id} type="hidden" name="campusIds" value={id} />)}
-                        <Popover>
+<Popover modal={true}>
                             <PopoverTrigger asChild>
                                 <Button 
                                     type="button"
@@ -350,7 +352,10 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                     <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                                 </Button>
                             </PopoverTrigger>
-                            <PopoverContent className="w-[240px] p-0" align="start">
+<PopoverContent
+  className="w-[240px] p-0 z-[100] pointer-events-auto"
+  align="start"
+>
                                 <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
                                     {filteredCampuses && filteredCampuses.length > 0 ? (
                                         filteredCampuses.map((cmp) => (
@@ -389,8 +394,7 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                         <div className="space-y-1.5">
                             <Label htmlFor="schoolIds" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Schools</Label>
                             {selectedSchools.map(id => <input key={id} type="hidden" name="schoolIds" value={id} />)}
-                            <Popover>
-                                <PopoverTrigger asChild>
+<Popover modal={true}>                                <PopoverTrigger asChild>
                                     <Button 
                                         type="button"
                                         variant="outline" 
@@ -418,7 +422,10 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                         <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                                     </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[240px] p-0" align="start">
+<PopoverContent
+  className="w-[240px] p-0 z-[100] pointer-events-auto"
+  align="start"
+>
                                     <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
                                         {sortedSchools && sortedSchools.length > 0 ? (
                                             sortedSchools.map((sch) => (
@@ -456,7 +463,7 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                         <div className="space-y-1.5">
                             <Label htmlFor="gradeIds" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Grades</Label>
                             {selectedGrades.map(id => <input key={id} type="hidden" name="gradeIds" value={id} />)}
-                            <Popover>
+<Popover modal={true}>
                                 <PopoverTrigger asChild>
                                     <Button 
                                         type="button"
@@ -485,8 +492,10 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                         <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                                     </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[240px] p-0" align="start">
-                                    <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
+<PopoverContent
+  className="w-[240px] p-0 z-[100] pointer-events-auto"
+  align="start"
+>                                    <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
                                         {sortedGrades && sortedGrades.length > 0 ? (
                                             sortedGrades.map((grd) => (
                                                 <div 
