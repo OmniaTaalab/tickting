@@ -96,10 +96,10 @@ export function CreateUserDialog({ isOpen, onClose, currentUserProfile }: Create
 
   const filteredCampuses = useMemo(() => {
     if (!campuses) return [];
-    if (currentUserProfile.role === 'Admin') return campuses;
-    
-    const myCampusIds = currentUserProfile.campusIds || [];
-    return campuses.filter(c => myCampusIds.includes(c.id));
+    if (currentUserProfile.role === 'Admin' || !currentUserProfile.campusIds || currentUserProfile.campusIds.length === 0) {
+      return campuses;
+    }
+    return campuses.filter(c => currentUserProfile.campusIds!.includes(c.id));
   }, [campuses, currentUserProfile]);
 
   useEffect(() => {
@@ -233,6 +233,7 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                             <Popover>
                                 <PopoverTrigger asChild>
                                     <Button 
+                                        type="button"
                                         variant="outline" 
                                         className="h-auto min-h-[44px] w-full justify-between border-slate-200 bg-white hover:bg-white px-3 font-normal"
                                         disabled={areDivisionsLoading}
@@ -247,7 +248,7 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                                             variant="secondary" 
                                                             className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0 h-5"
                                                         >
-                                                            {div?.name}
+                                                            {div?.name || id}
                                                         </Badge>
                                                     );
                                                 })
@@ -258,28 +259,34 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                         <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                                     </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[220px] p-0" align="start">
+                                <PopoverContent className="w-[240px] p-0" align="start">
                                     <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
-                                        {divisions?.map((div) => (
-                                            <div 
-                                                key={div.id}
-                                                onClick={() => toggleDivision(div.id)}
-                                                className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors"
-                                            >
-                                                <Checkbox 
-                                                    id={`div-${div.id}`} 
-                                                    checked={selectedDivs.includes(div.id)}
-                                                    onCheckedChange={() => toggleDivision(div.id)}
-                                                    className="h-4 w-4"
-                                                />
-                                                <Label 
-                                                    htmlFor={`div-${div.id}`} 
-                                                    className="text-sm font-medium text-slate-700 flex-1 cursor-pointer"
+                                        {divisions && divisions.length > 0 ? (
+                                            divisions.map((div) => (
+                                                <div 
+                                                    key={div.id}
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        toggleDivision(div.id);
+                                                    }}
+                                                    className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors select-none"
                                                 >
-                                                    {div.name}
-                                                </Label>
-                                            </div>
-                                        ))}
+                                                    <Checkbox 
+                                                        id={`div-${div.id}`} 
+                                                        checked={selectedDivs.includes(div.id)}
+                                                        className="h-4 w-4 pointer-events-none"
+                                                    />
+                                                    <span 
+                                                        className="text-sm font-medium text-slate-700 flex-1 select-none"
+                                                    >
+                                                        {div.name}
+                                                    </span>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="p-2 text-xs text-slate-400 text-center">No divisions found</p>
+                                        )}
                                     </div>
                                 </PopoverContent>
                             </Popover>
@@ -332,7 +339,7 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                                         variant="secondary" 
                                                         className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0 h-5"
                                                     >
-                                                        {cmp?.name}
+                                                        {cmp?.name || id}
                                                     </Badge>
                                                 );
                                             })
@@ -343,28 +350,34 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                     <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                                 </Button>
                             </PopoverTrigger>
-                            <PopoverContent className="w-[220px] p-0" align="start">
+                            <PopoverContent className="w-[240px] p-0" align="start">
                                 <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
-                                    {filteredCampuses.map((cmp) => (
-                                        <div 
-                                            key={cmp.id}
-                                            onClick={() => toggleCampus(cmp.id)}
-                                            className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors"
-                                        >
-                                            <Checkbox 
-                                                id={`cmp-${cmp.id}`} 
-                                                checked={selectedCampuses.includes(cmp.id)}
-                                                onCheckedChange={() => toggleCampus(cmp.id)}
-                                                className="h-4 w-4"
-                                            />
-                                            <Label 
-                                                htmlFor={`cmp-${cmp.id}`} 
-                                                className="text-sm font-medium text-slate-700 flex-1 cursor-pointer"
+                                    {filteredCampuses && filteredCampuses.length > 0 ? (
+                                        filteredCampuses.map((cmp) => (
+                                            <div 
+                                                key={cmp.id}
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    toggleCampus(cmp.id);
+                                                }}
+                                                className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors select-none"
                                             >
-                                                {cmp.name}
-                                            </Label>
-                                        </div>
-                                    ))}
+                                                <Checkbox 
+                                                    id={`cmp-${cmp.id}`} 
+                                                    checked={selectedCampuses.includes(cmp.id)}
+                                                    className="h-4 w-4 pointer-events-none"
+                                                />
+                                                <span 
+                                                    className="text-sm font-medium text-slate-700 flex-1 select-none"
+                                                >
+                                                    {cmp.name}
+                                                </span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <p className="p-2 text-xs text-slate-400 text-center">No campuses found</p>
+                                    )}
                                 </div>
                             </PopoverContent>
                         </Popover>
@@ -405,27 +418,29 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                         <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                                     </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[220px] p-0" align="start">
+                                <PopoverContent className="w-[240px] p-0" align="start">
                                     <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
                                         {sortedSchools && sortedSchools.length > 0 ? (
                                             sortedSchools.map((sch) => (
                                                 <div 
                                                     key={sch.id}
-                                                    onClick={() => toggleSchool(sch.id)}
-                                                    className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors"
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        toggleSchool(sch.id);
+                                                    }}
+                                                    className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors select-none"
                                                 >
                                                     <Checkbox 
                                                         id={`school-${sch.id}`} 
                                                         checked={selectedSchools.includes(sch.id)}
-                                                        onCheckedChange={() => toggleSchool(sch.id)}
-                                                        className="h-4 w-4"
+                                                        className="h-4 w-4 pointer-events-none"
                                                     />
-                                                    <Label 
-                                                        htmlFor={`school-${sch.id}`} 
-                                                        className="text-sm font-medium text-slate-700 flex-1 cursor-pointer"
+                                                    <span 
+                                                        className="text-sm font-medium text-slate-700 flex-1 select-none"
                                                     >
                                                         {sch.name}
-                                                    </Label>
+                                                    </span>
                                                 </div>
                                             ))
                                         ) : (
@@ -470,27 +485,29 @@ href={`https://console.developers.google.com/apis/api/identitytoolkit.googleapis
                                         <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                                     </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[220px] p-0" align="start">
+                                <PopoverContent className="w-[240px] p-0" align="start">
                                     <div className="p-2 space-y-1 max-h-[300px] overflow-y-auto">
                                         {sortedGrades && sortedGrades.length > 0 ? (
                                             sortedGrades.map((grd) => (
                                                 <div 
                                                     key={grd.id}
-                                                    onClick={() => toggleGrade(grd.id)}
-                                                    className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors"
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        toggleGrade(grd.id);
+                                                    }}
+                                                    className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors select-none"
                                                 >
                                                     <Checkbox 
                                                         id={`grade-${grd.id}`} 
                                                         checked={selectedGrades.includes(grd.id)}
-                                                        onCheckedChange={() => toggleGrade(grd.id)}
-                                                        className="h-4 w-4"
+                                                        className="h-4 w-4 pointer-events-none"
                                                     />
-                                                    <Label 
-                                                        htmlFor={`grade-${grd.id}`} 
-                                                        className="text-sm font-medium text-slate-700 flex-1 cursor-pointer"
+                                                    <span 
+                                                        className="text-sm font-medium text-slate-700 flex-1 select-none"
                                                     >
                                                         {grd.name}
-                                                    </Label>
+                                                    </span>
                                                 </div>
                                             ))
                                         ) : (

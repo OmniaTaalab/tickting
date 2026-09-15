@@ -81,6 +81,7 @@ function SchoolConfigRow({
                 <Popover>
                     <PopoverTrigger asChild>
                         <Button 
+                            type="button"
                             variant="outline" 
                             className="h-10 w-full justify-between bg-white border-slate-200 px-3 font-normal"
                         >
@@ -106,15 +107,19 @@ function SchoolConfigRow({
                             {allGrades.map((grade) => (
                                 <div 
                                     key={grade.id}
-                                    onClick={() => toggleGrade(grade.id)}
-                                    className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        toggleGrade(grade.id);
+                                    }}
+                                    className="flex items-center gap-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer transition-colors select-none"
                                 >
                                     <Checkbox 
                                         id={`grade-${config.schoolId}-${grade.id}`} 
                                         checked={config.gradeIds.includes(grade.id)}
-                                        onCheckedChange={() => toggleGrade(grade.id)}
+                                        className="h-4 w-4 pointer-events-none"
                                     />
-                                    <Label className="text-sm font-medium text-slate-700 cursor-pointer flex-1">{grade.name}</Label>
+                                    <span className="text-sm font-medium text-slate-700 flex-1 select-none">{grade.name}</span>
                                 </div>
                             ))}
                         </div>

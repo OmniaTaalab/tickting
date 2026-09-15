@@ -14,6 +14,17 @@ interface SystemLogPayload {
     details?: Record<string, any>;
 }
 
+function sanitizeForFirestore(val: any): any {
+    if (val === undefined) return null;
+    if (val === null || typeof val !== 'object') return val;
+    if (Array.isArray(val)) return val.map(sanitizeForFirestore);
+    const result: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) {
+        result[k] = v === undefined ? null : sanitizeForFirestore(v);
+    }
+    return result;
+}
+
 export async function logSystemEvent(payload: SystemLogPayload) {
     const db = adminDb;
     if (!db) {
@@ -22,8 +33,15 @@ export async function logSystemEvent(payload: SystemLogPayload) {
     }
 
     try {
+        const sanitizedDetails = payload.details ? sanitizeForFirestore(payload.details) : {};
         const logEntry = {
-            ...payload,
+            eventType: payload.eventType || 'GENERAL_EVENT',
+            actor: {
+                userId: payload.actor?.userId || 'system',
+                name: payload.actor?.name || 'System',
+            },
+            message: payload.message || '',
+            details: sanitizedDetails,
             timestamp: FieldValue.serverTimestamp(),
         };
         await db.collection('system-logs').add(logEntry);
