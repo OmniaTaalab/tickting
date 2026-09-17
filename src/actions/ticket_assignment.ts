@@ -5,7 +5,7 @@ import type { UserProfile, Ticket } from '@/lib/types';
 import { FieldValue } from 'firebase-admin/firestore';
 import { logSystemEvent } from '@/lib/system-log';
 import { revalidatePath } from 'next/cache';
-
+import { isWithinWorkingHours } from '@/lib/working-hours-utils';
 export type AssigneeProfile = Pick<UserProfile, 'id' | 'name' | 'avatarUrl' | 'email'>;
 
 export interface QueuedTicketAssignment {
@@ -55,7 +55,16 @@ export async function getRoundRobinAssignee(departmentId: string, campusId?: str
             if (!deptDoc.exists) {
                 throw new Error(`Department with ID ${departmentId} not found.`);
             }
+const department = deptDoc.data() as any;
 
+const isNowWorking = isWithinWorkingHours(department.workingHours);
+
+if (!isNowWorking) {
+    console.log(
+        `Outside working hours for department ${departmentId}. Assignment skipped.`
+    );
+    return;
+}
             // Get staff members with 'Employee' role in this department
             const usersSnapshot = await transaction.get(
                 db.collection('users')
@@ -104,7 +113,6 @@ export async function getRoundRobinAssignee(departmentId: string, campusId?: str
                 return;
             }
 
-            const department = deptDoc.data() as any;
             let lastAssignedId = department.lastAssignedUserId;
             let nextIndex = 0;
 
@@ -204,21 +212,22 @@ export async function autoAssignQueuedTickets(options?: {
     const skippedTickets: Array<{ ticketId: string; ticketNumber?: number | string; subject?: string; reason: string }> = [];
 
     // Cache departments and available agents
-    const deptCache = new Map<string, {
-      deptRef: FirebaseFirestore.DocumentReference;
-      name: string;
-      lastAssignedUserId?: string;
-      lastAssignedUserIndex?: number;
-      availableAgents: Array<{
-        id: string;
-        name: string;
-        email?: string;
-        avatarUrl?: string;
-        status: string;
-        campusIds: string[];
-        activeSessionId?: string;
-      }>;
-    }>();
+  const deptCache = new Map<string, {
+  deptRef: FirebaseFirestore.DocumentReference;
+  name: string;
+  workingHours?: any;
+  lastAssignedUserId?: string;
+  lastAssignedUserIndex?: number;
+  availableAgents: Array<{
+    id: string;
+    name: string;
+    email?: string;
+    avatarUrl?: string;
+    status: string;
+    campusIds: string[];
+    activeSessionId?: string;
+  }>;
+}>();
 
     async function getDeptInfo(deptId: string) {
       if (deptCache.has(deptId)) return deptCache.get(deptId)!;
@@ -252,12 +261,13 @@ export async function autoAssignQueuedTickets(options?: {
         .sort((a, b) => a.id.localeCompare(b.id));
 
       const entry = {
-        deptRef,
-        name: deptName,
-        lastAssignedUserId: deptData?.lastAssignedUserId,
-        lastAssignedUserIndex: deptData?.lastAssignedUserIndex ?? -1,
-        availableAgents,
-      };
+  deptRef,
+  name: deptName,
+  workingHours: deptData?.workingHours,
+  lastAssignedUserId: deptData?.lastAssignedUserId,
+  lastAssignedUserIndex: deptData?.lastAssignedUserIndex ?? -1,
+  availableAgents,
+};
       deptCache.set(deptId, entry);
       return entry;
     }
@@ -278,16 +288,40 @@ export async function autoAssignQueuedTickets(options?: {
         continue;
       }
 
-      const deptInfo = await getDeptInfo(deptId);
-      if (!deptInfo || deptInfo.availableAgents.length === 0) {
-        skippedTickets.push({
-          ticketId,
-          ticketNumber: ticket.ticketNumber,
-          subject: ticket.subject,
-          reason: `No available, logged-in agents in category "${deptInfo?.name || deptId}"`,
-        });
-        continue;
-      }
+    const deptInfo = await getDeptInfo(deptId);
+
+if (!deptInfo) {
+  skippedTickets.push({
+    ticketId,
+    ticketNumber: ticket.ticketNumber,
+    subject: ticket.subject,
+    reason: 'Department not found',
+  });
+  continue;
+}
+
+// ✅ Don't assign queued tickets outside department working hours
+const isNowWorking = isWithinWorkingHours(deptInfo.workingHours);
+
+if (!isNowWorking) {
+  skippedTickets.push({
+    ticketId,
+    ticketNumber: ticket.ticketNumber,
+    subject: ticket.subject,
+    reason: `Outside working hours for category "${deptInfo.name}"`,
+  });
+  continue;
+}
+
+if (deptInfo.availableAgents.length === 0) {
+  skippedTickets.push({
+    ticketId,
+    ticketNumber: ticket.ticketNumber,
+    subject: ticket.subject,
+    reason: `No available, logged-in agents in category "${deptInfo.name}"`,
+  });
+  continue;
+}
 
       // Filter agents covering the ticket's campus (if specified)
       const campusId = ticket.campusId;
