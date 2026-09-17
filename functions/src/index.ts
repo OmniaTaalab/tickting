@@ -170,784 +170,784 @@ const MAILBOXES: MailboxConfig[] = [
     },
 
     // Academic queues
-    academicMailbox(
-        "ks1-2-nci-br@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ks1-2-nci-br@nis-egypt.com",
+//         "Qlqa5RuNvLuFuPAFnTmF",
+//         "New Capital International",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "British",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ks3.ca@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ks3.ca@nis-egypt.com",
+//         "Qlqa5RuNvLuFuPAFnTmF",
+//         "New Capital International",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "British",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ig.ca@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ig.ca@nis-egypt.com",
+//         "Qlqa5RuNvLuFuPAFnTmF",
+//         "New Capital International",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "British",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "nca.elementaryoffice@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "nca.elementaryoffice@nis-egypt.com",
+//         "Qlqa5RuNvLuFuPAFnTmF",
+//         "New Capital International",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "American",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ca.am.ms@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ca.am.ms@nis-egypt.com",
+//         "Qlqa5RuNvLuFuPAFnTmF",
+//         "New Capital International",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "American",
+//                 grades: ["Grade6", "Grade7", "Grade8"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ca.high-school@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ca.high-school@nis-egypt.com",
+//         "Qlqa5RuNvLuFuPAFnTmF",
+//         "New Capital International",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "American",
+//                 grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ey.nci@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            },
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ey.nci@nis-egypt.com",
+//         "Qlqa5RuNvLuFuPAFnTmF",
+//         "New Capital International",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "American",
+//                 grades: ["Pre school", "KG1", "KG2"],
+//             },
+//             {
+//                 division: "Early Years",
+//                 school: "British",
+//                 grades: ["Foundation Stage 1", "Foundation Stage 2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "kg.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Early Years",
-                school: "National English",
-                grades: ["KG1", "KG2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "kg.ncn@nis-egypt.com",
+//         "NySuXzwGRFnLiO3pAxie",
+//         "New Capital National",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "National English",
+//                 grades: ["KG1", "KG2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "lowerprimary.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade1", "Grade2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "lowerprimary.ncn@nis-egypt.com",
+//         "NySuXzwGRFnLiO3pAxie",
+//         "New Capital National",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National English",
+//                 grades: ["Grade1", "Grade2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "primary.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade3", "Grade4"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "primary.ncn@nis-egypt.com",
+//         "NySuXzwGRFnLiO3pAxie",
+//         "New Capital National",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National English",
+//                 grades: ["Grade3", "Grade4"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "upperprimary.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "upperprimary.ncn@nis-egypt.com",
+//         "NySuXzwGRFnLiO3pAxie",
+//         "New Capital National",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National English",
+//                 grades: ["Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "preparatory.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Middle School",
-                school: "National English",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "preparatory.ncn@nis-egypt.com",
+//         "NySuXzwGRFnLiO3pAxie",
+//         "New Capital National",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "National English",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "secondary.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "High School",
-                school: "National English",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "secondary.ncn@nis-egypt.com",
+//         "NySuXzwGRFnLiO3pAxie",
+//         "New Capital National",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "National English",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "nis-earlyyears-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            },
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "nis-earlyyears-oc@nis-egypt.com",
+//         "5c1TfIe5ePQhicggJrP8",
+//         "6th October",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "American",
+//                 grades: ["Pre school", "KG1", "KG2"],
+//             },
+//             {
+//                 division: "Early Years",
+//                 school: "British",
+//                 grades: ["Foundation Stage 1", "Foundation Stage 2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "nis-keystage1-2-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "nis-keystage1-2-oc@nis-egypt.com",
+//         "5c1TfIe5ePQhicggJrP8",
+//         "6th October",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "British",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "nis-keystage3-4-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            },
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "nis-keystage3-4-oc@nis-egypt.com",
+//         "5c1TfIe5ePQhicggJrP8",
+//         "6th October",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "British",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             },
+//             {
+//                 division: "High School",
+//                 school: "British",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "nis-elementaryschool-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "nis-elementaryschool-oc@nis-egypt.com",
+//         "5c1TfIe5ePQhicggJrP8",
+//         "6th October",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "American",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "nis-middleschool-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "nis-middleschool-oc@nis-egypt.com",
+//         "5c1TfIe5ePQhicggJrP8",
+//         "6th October",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "American",
+//                 grades: ["Grade6", "Grade7", "Grade8"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "nis-highschool-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "nis-highschool-oc@nis-egypt.com",
+//         "5c1TfIe5ePQhicggJrP8",
+//         "6th October",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "American",
+//                 grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "kgamerican.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "kgamerican.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "American",
+//                 grades: ["Pre school", "KG1", "KG2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "elementary.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "elementary.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "American",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "middleschool.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "middleschool.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "American",
+//                 grades: ["Grade6", "Grade7", "Grade8"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "highschool.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "highschool.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "American",
+//                 grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ibschool.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "High School",
-                school: "IB",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ibschool.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "IB",
+//                 grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "kgfrench.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Early Years",
-                school: "National French",
-                grades: ["Pre school", "KG1", "KG2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "kgfrench.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "National French",
+//                 grades: ["Pre school", "KG1", "KG2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "primairefrench.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Elementary",
-                school: "National French",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "primairefrench.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National French",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "préparatoirefrench.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Middle School",
-                school: "National French",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "préparatoirefrench.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "National French",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "secondairefrench.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "High School",
-                school: "National French",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "secondairefrench.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "National French",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "kgnational.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Early Years",
-                school: "National English",
-                grades: ["KG1", "KG2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "kgnational.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "National English",
+//                 grades: ["KG1", "KG2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "lowerprimarynational.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade1", "Grade2", "Grade3"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "lowerprimarynational.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National English",
+//                 grades: ["Grade1", "Grade2", "Grade3"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "upperprimarynational.tag@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "upperprimarynational.tag@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National English",
+//                 grades: ["Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "preparatorynational@nis-egypt.com",
-        "VD4fBBRBUAKmdNteZocG",
-        "1st Settlement",
-        [
-            {
-                division: "Middle School",
-                school: "National English",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "preparatorynational@nis-egypt.com",
+//         "VD4fBBRBUAKmdNteZocG",
+//         "1st Settlement",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "National English",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ey.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            },
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            },
-            {
-                division: "Early Years",
-                school: "National French",
-                grades: ["Pre school", "KG1", "KG2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ey.ps@nis-egypt.com",
+//         "ZKLWPTV7ip6bC6dK95L4",
+//         "Porto Said",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "American",
+//                 grades: ["Pre school", "KG1", "KG2"],
+//             },
+//             {
+//                 division: "Early Years",
+//                 school: "British",
+//                 grades: ["Foundation Stage 1", "Foundation Stage 2"],
+//             },
+//             {
+//                 division: "Early Years",
+//                 school: "National French",
+//                 grades: ["Pre school", "KG1", "KG2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "el.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            },
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "el.ps@nis-egypt.com",
+//         "ZKLWPTV7ip6bC6dK95L4",
+//         "Porto Said",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "American",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
+//             },
+//             {
+//                 division: "Elementary",
+//                 school: "British",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "pr.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Elementary",
-                school: "National French",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "pr.ps@nis-egypt.com",
+//         "ZKLWPTV7ip6bC6dK95L4",
+//         "Porto Said",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National French",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ms-am.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ms-am.ps@nis-egypt.com",
+//         "ZKLWPTV7ip6bC6dK95L4",
+//         "Porto Said",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "American",
+//                 grades: ["Grade6", "Grade7", "Grade8"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "hs-am.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "hs-am.ps@nis-egypt.com",
+//         "ZKLWPTV7ip6bC6dK95L4",
+//         "Porto Said",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "American",
+//                 grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ms-br.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ms-br.ps@nis-egypt.com",
+//         "ZKLWPTV7ip6bC6dK95L4",
+//         "Porto Said",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "British",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "hs-br.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "hs-br.ps@nis-egypt.com",
+//         "ZKLWPTV7ip6bC6dK95L4",
+//         "Porto Said",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "British",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ey.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            },
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ey.shorouk@nis-egypt.com",
+//         "yo3Wwso55VNU0wG3Oq4S",
+//         "El-Sherouk",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "American",
+//                 grades: ["Pre school", "KG1", "KG2"],
+//             },
+//             {
+//                 division: "Early Years",
+//                 school: "British",
+//                 grades: ["Foundation Stage 1", "Foundation Stage 2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "es.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "es.shorouk@nis-egypt.com",
+//         "yo3Wwso55VNU0wG3Oq4S",
+//         "El-Sherouk",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "American",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ms.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ms.shorouk@nis-egypt.com",
+//         "yo3Wwso55VNU0wG3Oq4S",
+//         "El-Sherouk",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "American",
+//                 grades: ["Grade6", "Grade7", "Grade8"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "hs.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "hs.shorouk@nis-egypt.com",
+//         "yo3Wwso55VNU0wG3Oq4S",
+//         "El-Sherouk",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "American",
+//                 grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ks1.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ks1.shorouk@nis-egypt.com",
+//         "yo3Wwso55VNU0wG3Oq4S",
+//         "El-Sherouk",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "British",
+//                 grades: ["Grade1", "Grade2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ks2.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ks2.shorouk@nis-egypt.com",
+//         "yo3Wwso55VNU0wG3Oq4S",
+//         "El-Sherouk",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "British",
+//                 grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ks3.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ks3.shorouk@nis-egypt.com",
+//         "yo3Wwso55VNU0wG3Oq4S",
+//         "El-Sherouk",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "British",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "ig.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "ig.shorouk@nis-egypt.com",
+//         "yo3Wwso55VNU0wG3Oq4S",
+//         "El-Sherouk",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "British",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "kg.nc@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Early Years",
-                school: "National English",
-                grades: ["KG1", "KG2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "kg.nc@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "National English",
+//                 grades: ["KG1", "KG2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "lowerprimary.nc@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade1", "Grade2"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "lowerprimary.nc@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National English",
+//                 grades: ["Grade1", "Grade2"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "upperprimary.nc-g@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "upperprimary.nc-g@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National English",
+//                 grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "upperprimary.nc-b@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "upperprimary.nc-b@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "Elementary",
+//                 school: "National English",
+//                 grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "preparatory.nc-g@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Middle School",
-                school: "National English",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "preparatory.nc-g@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "National English",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "preparatory.nc-b@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Middle School",
-                school: "National English",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "preparatory.nc-b@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "Middle School",
+//                 school: "National English",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "secondary.nc-g@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "High School",
-                school: "National English",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "secondary.nc-g@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "National English",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "secondary.nc-b@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "High School",
-                school: "National English",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
+//     academicMailbox(
+//         "secondary.nc-b@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "High School",
+//                 school: "National English",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     ),
 
-    academicMailbox(
-        "br-nc.office@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            },
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            },
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            },
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    )
-];
+//     academicMailbox(
+//         "br-nc.office@nis-egypt.com",
+//         "daZr2WQAV0WJlOGPpKFV",
+//         "Nasr City",
+//         [
+//             {
+//                 division: "Early Years",
+//                 school: "British",
+//                 grades: ["Foundation Stage 1", "Foundation Stage 2"],
+//             },
+//             {
+//                 division: "Elementary",
+//                 school: "British",
+//                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
+//             },
+//             {
+//                 division: "Middle School",
+//                 school: "British",
+//                 grades: ["Grade7", "Grade8", "Grade9"],
+//             },
+//             {
+//                 division: "High School",
+//                 school: "British",
+//                 grades: ["Grade10", "Grade11", "Grade12"],
+//             }
+//         ]
+//     )
+ ];
 
 function normalizeMessageId(value?: string | null): string | null {
     if (!value) return null;
