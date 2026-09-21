@@ -51,6 +51,7 @@ import { requestTicketTransferAction } from '@/actions/ticket_request_transfer';
 import { requestTicketReassignmentAction } from '@/actions/ticket_request_reassign';
 import { reassignTicketAction } from '@/actions/ticket_reassign';
 import { deleteTicketMessageAction } from '@/actions/ticket_message_delete';
+import { deleteTicketAction } from '@/actions/ticket_delete';
 import { updateTicketStatusAction } from '@/actions/ticket_status_action';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
@@ -566,6 +567,8 @@ export default function TicketDetailPage() {
   const [isTransferOpen, setTransferOpen] = useState(false);
   const [isAssignOpen, setAssignOpen] = useState(false);
   const [isTagsOpen, setTagsOpen] = useState(false);
+  const [isDeleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isDeletingTicket, setIsDeletingTicket] = useState(false);
   const lastProcessedReassignRef = useRef<any>(null);
   
   const [isVerified, setIsVerified] = useState(false);
@@ -641,6 +644,39 @@ export default function TicketDetailPage() {
           setVerifyError(false);
       } else {
           setVerifyError(true);
+      }
+  };
+
+  const handleDeleteTicket = async () => {
+      if (!currentUser || userProfile?.role !== 'Admin' || !ticket) return;
+      setIsDeletingTicket(true);
+      try {
+          const result = await deleteTicketAction(ticket.id, {
+              userId: currentUser.uid,
+              name: userProfile?.name || currentUser.displayName || 'Admin',
+          });
+          if (result.success) {
+              toast({
+                  title: '✅ ' + t('approved'),
+                  description: result.message || t('statusUpdated'),
+              });
+              setDeleteDialogOpen(false);
+              router.push('/tickets');
+          } else {
+              toast({
+                  variant: 'destructive',
+                  title: 'Error',
+                  description: result.message || 'Failed to delete ticket.',
+              });
+              setIsDeletingTicket(false);
+          }
+      } catch (err: any) {
+          toast({
+              variant: 'destructive',
+              title: 'Error',
+              description: err.message || 'Failed to delete ticket.',
+          });
+          setIsDeletingTicket(false);
       }
   };
 
@@ -726,6 +762,50 @@ export default function TicketDetailPage() {
       <TransferCategoryDialog isOpen={isTransferOpen} onClose={() => setTransferOpen(false)} ticketId={ticket.id} currentCategory={ticket.departmentId} userRole={userProfile?.role} />
       <AssignPersonDialog isOpen={isAssignOpen} onClose={() => setAssignOpen(false)} ticketId={ticket.id} categoryId={ticket.departmentId} />
       <ManageTagsDialog isOpen={isTagsOpen} onClose={() => setTagsOpen(false)} ticketId={ticket.id} currentTags={ticket.tags || []} />
+
+      {/* Delete Ticket Confirmation Dialog for Admin */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-start text-red-600 flex items-center gap-2">
+              <Trash2 className="h-5 w-5" />
+              {t('deleteTicketConfirmTitle')}
+            </DialogTitle>
+            <DialogDescription className="text-start pt-2 text-slate-600">
+              {t('deleteTicketConfirmDesc')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2 my-2 text-start">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-bold">{t('ticketId')}:</span>
+              <span className="font-black text-slate-900">T-{ticket.ticketNumber || ticket.id.substring(0, 4)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-bold">{t('titleLabel')}:</span>
+              <span className="font-bold text-slate-900 truncate max-w-[200px]">{ticket.title || ticket.subject || 'No Subject'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-bold">{t('category')}:</span>
+              <span className="font-semibold text-slate-700">{ticket.departmentName || t('na')}</span>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="ghost" onClick={() => setDeleteDialogOpen(false)} disabled={isDeletingTicket}>
+              {t('cancel')}
+            </Button>
+            <Button 
+              type="button" 
+              variant="destructive" 
+              onClick={handleDeleteTicket} 
+              disabled={isDeletingTicket}
+              className="bg-red-600 hover:bg-red-700 text-white font-bold gap-2"
+            >
+              {isDeletingTicket ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {isDeletingTicket ? t('deletingTicket') : t('deleteTicket')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
           <div className="space-y-4 text-start font-body">
@@ -820,6 +900,19 @@ export default function TicketDetailPage() {
                                 {t('requestReassignment')}
                             </Button>
                         </form>
+                    )}
+
+                    {userProfile?.role === 'Admin' && (
+                        <div className="pt-3 border-t border-slate-100">
+                            <Button 
+                                variant="outline" 
+                                className="w-full h-10 border-red-200 bg-red-50/50 text-red-600 hover:bg-red-100 hover:text-red-700 hover:border-red-300 font-bold text-xs gap-2 transition-all cursor-pointer" 
+                                onClick={() => setDeleteDialogOpen(true)}
+                            >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                {t('deleteTicket')}
+                            </Button>
+                        </div>
                     )}
                 </CardContent>
             </Card>
