@@ -221,14 +221,14 @@ export const DEFAULT_SLA_SETTINGS: SLASettings = {
     Form: { Low: 24, Normal: 12, High: 6, Urgent: 3 },
 };
 
-export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+export const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export const DEFAULT_WORKING_HOURS: WorkingHours = {
+  Sunday: { isOpen: true, start: "08:00", end: "16:00" },
   Monday: { isOpen: true, start: "08:00", end: "16:00" },
   Tuesday: { isOpen: true, start: "08:00", end: "16:00" },
   Wednesday: { isOpen: true, start: "08:00", end: "16:00" },
   Thursday: { isOpen: true, start: "08:00", end: "16:00" },
   Friday: { isOpen: false, start: "08:00", end: "16:00" },
   Saturday: { isOpen: false, start: "08:00", end: "16:00" },
-  Sunday: { isOpen: true, start: "08:00", end: "16:00" },
 };

@@ -172,7 +172,7 @@ export function DepartmentWorkingHours() {
                         <div key={day} className="grid grid-cols-1 md:grid-cols-4 items-center gap-4 py-4 px-4 hover:bg-slate-50/50 transition-colors">
                             <div className="flex items-center gap-2 text-start">
                                 <CalendarDays className="h-4 w-4 text-slate-400" />
-                                <span className="font-bold text-slate-700">{day}</span>
+                                <span className="font-bold text-slate-700">{t(day) || day}</span>
                             </div>
                             
                             <div className="flex items-center gap-3 text-start">

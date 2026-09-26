@@ -107,7 +107,7 @@ export function AfterHoursEmailSettingsPanel() {
       .replace(/{{departmentName}}/g, deptName)
       .replace(/{{subject}}/g, "Password Reset Help")
       .replace(/{{submittedAt}}/g, new Date().toLocaleString())
-      .replace(/{{workingHours}}/g, "Mon-Thu: 08:00-16:00, Sun: 08:00-16:00");
+      .replace(/{{workingHours}}/g, "Sun-Thu: 08:00-16:00");
   };
 
   const isLoading = isGlobalLoading || isDeptLoading;

@@ -1,7 +1,7 @@
 
 import { format, parse, isSameDay, addDays, startOfDay, isBefore, isAfter, differenceInMinutes } from 'date-fns';
 import type { WorkingHours } from './types';
-import { DEFAULT_WORKING_HOURS } from './types';
+import { DEFAULT_WORKING_HOURS, WEEKDAYS } from './types';
 
 /**
  * Checks if a given date (defaulting to now) is within the provided working hours config.
@@ -80,9 +80,9 @@ export function calculateWorkingHoursElapsed(start: Date, end: Date, workingHour
 export function getWorkingHoursSummary(workingHours: WorkingHours | undefined): string {
     const hoursToUse = workingHours || DEFAULT_WORKING_HOURS;
     
-    const summaries = Object.entries(hoursToUse)
-        .filter(([_, config]) => config.isOpen)
-        .map(([day, config]) => `${day.substring(0, 3)}: ${config.start}-${config.end}`);
+    const summaries = WEEKDAYS
+        .filter((day) => hoursToUse[day]?.isOpen)
+        .map((day) => `${day.substring(0, 3)}: ${hoursToUse[day].start}-${hoursToUse[day].end}`);
     
     return summaries.length > 0 ? summaries.join(', ') : "Closed";
 }

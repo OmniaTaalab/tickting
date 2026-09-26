@@ -408,6 +408,14 @@ const translations: Record<Language, Record<string, string>> = {
     Web: "Web",
     Other: "Other",
     Form: "Form",
+    Sunday: "Sunday",
+    Monday: "Monday",
+    Tuesday: "Tuesday",
+    Wednesday: "Wednesday",
+    Thursday: "Thursday",
+    Friday: "Friday",
+    Saturday: "Saturday",
+    closed: "Closed",
   },
   ar: {
     // Nav
@@ -805,6 +813,14 @@ const translations: Record<Language, Record<string, string>> = {
     Web: "ويب",
     Other: "أخرى",
     Form: "نموذج",
+    Sunday: "الأحد",
+    Monday: "الاثنين",
+    Tuesday: "الثلاثاء",
+    Wednesday: "الأربعاء",
+    Thursday: "الخميس",
+    Friday: "الجمعة",
+    Saturday: "السبت",
+    closed: "مغلق",
   }
 };
 
