@@ -1,13 +1,13 @@
 'use client';
 
-import { LogOut, PlusCircle, User } from 'lucide-react';
+import { LogOut, PlusCircle, User, ArrowLeft, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAuth, useUser, useFirebase, useMemoFirebase, useDoc } from '@/firebase';
 import { signOut } from 'firebase/auth';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { doc } from 'firebase/firestore';
 import type { UserProfile } from '@/lib/types';
 import { toggleUserStatusAction } from '@/actions/status_actions';
@@ -115,7 +115,10 @@ function UserMenu() {
 
 export function Header() {
   const { user } = useUser();
-  const { t } = useLanguage();
+  const { t, isRTL } = useLanguage();
+  const pathname = usePathname();
+  const isNewTicketPage = pathname === '/tickets/new';
+  const BackArrow = isRTL ? ArrowRight : ArrowLeft;
 
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center gap-4 border-b bg-background/80 px-4 backdrop-blur-sm lg:px-6">
@@ -123,12 +126,21 @@ export function Header() {
         <SidebarTrigger className="md:hidden" />
       </div>
       <div className="flex flex-1 items-center justify-end gap-4">
-        <Button asChild className="bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white transition-colors">
-          <Link href="/tickets/new">
-            <PlusCircle className="mr-2 h-4 w-4" />
-            {t('newTicket')}
-          </Link>
-        </Button>
+        {isNewTicketPage ? (
+          <Button asChild variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-100 font-semibold transition-colors gap-2">
+            <Link href="/tickets">
+              <BackArrow className="h-4 w-4" />
+              <span>{t('backToTickets')}</span>
+            </Link>
+          </Button>
+        ) : (
+          <Button asChild className="bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white transition-colors">
+            <Link href="/tickets/new">
+              <PlusCircle className="mr-2 h-4 w-4" />
+              {t('newTicket')}
+            </Link>
+          </Button>
+        )}
         <div className="flex items-center gap-2">
           {user && (
             <>

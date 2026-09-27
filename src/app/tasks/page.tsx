@@ -103,6 +103,10 @@ function TaskRow({ ticket, slaSettings, now, departments }: { ticket: Ticket; sl
                         <Badge variant="secondary" className="h-4 px-1.5 py-0 text-[9px] uppercase">
                             {ticket.campusName}
                         </Badge>
+                        <span>·</span>
+                        <span className="text-slate-500 font-semibold">
+                            {t('assignedTime')}: {toDate(ticket.assignedAt || ticket.createdAt) ? format(toDate(ticket.assignedAt || ticket.createdAt)!, 'MMM d, h:mm a') : t('na')}
+                        </span>
                     </div>
                 </div>
             </div>

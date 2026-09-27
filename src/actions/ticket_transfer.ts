@@ -67,6 +67,7 @@ export async function transferTicketToCategoryAction(
         email: newAssignee.email || '',
         avatarUrl: newAssignee.avatarUrl,
       } : null,
+      assignedAt: newAssignee ? FieldValue.serverTimestamp() : null,
       status: newStatus,
       updatedAt: FieldValue.serverTimestamp(),
     };

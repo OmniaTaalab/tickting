@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useTransition } from 'react';
@@ -13,6 +12,8 @@ import { toggleUserStatusAction } from '@/actions/status_actions';
 import { useToast } from '@/hooks/use-toast';
 import { useLanguage } from '@/hooks/use-language';
 
+const USER_STATUS_STORAGE_KEY = 'nis_user_status_pref';
+
 export function UserStatusToggle() {
   const { firestore } = useFirebase();
   const { user } = useUser();
@@ -26,26 +27,41 @@ export function UserStatusToggle() {
   );
   const { data: userProfile, isLoading } = useDoc<UserProfile>(userProfileRef);
 
-  const [currentStatus, setCurrentStatus] = useState<UserStatus>('Available');
+  const [currentStatus, setCurrentStatus] = useState<UserStatus>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(USER_STATUS_STORAGE_KEY) as UserStatus;
+      if (saved === 'Available' || saved === 'Busy') return saved;
+    }
+    return 'Available';
+  });
 
   useEffect(() => {
     if (userProfile?.status) {
       setCurrentStatus(userProfile.status);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(USER_STATUS_STORAGE_KEY, userProfile.status);
+      }
     }
-  }, [userProfile]);
+  }, [userProfile?.status]);
 
   const handleToggle = (checked: boolean) => {
     if (!user) return;
     const newStatus: UserStatus = checked ? 'Available' : 'Busy';
     
-    // Optimistic UI update
+    // Optimistic UI update & persist to localStorage
     const previousStatus = currentStatus;
     setCurrentStatus(newStatus);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(USER_STATUS_STORAGE_KEY, newStatus);
+    }
 
     startTransition(async () => {
       const result = await toggleUserStatusAction(user.uid, newStatus);
       if (!result?.success) {
         setCurrentStatus(previousStatus);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(USER_STATUS_STORAGE_KEY, previousStatus);
+        }
         toast({
           variant: 'destructive',
           title: 'Update Failed',
@@ -55,7 +71,7 @@ export function UserStatusToggle() {
     });
   };
 
-  if (isLoading) {
+  if (isLoading && !currentStatus) {
     return <div className="flex items-center justify-center w-8 h-8"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>;
   }
 

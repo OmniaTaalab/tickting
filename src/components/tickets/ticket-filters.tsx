@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { Input } from '../ui/input';
 import { useLanguage } from '@/hooks/use-language';
 
-export type ColumnId = 'id' | 'details' | 'date' | 'assignedTo' | 'priority' | 'status' | 'channel' | 'division' | 'campus' | 'slaStatus' | 'lastUpdated' | 'resolvedAt' | 'closedAt' | 'firstResponse' | 'tags';
+export type ColumnId = 'id' | 'details' | 'date' | 'assignedTo' | 'assignedAt' | 'priority' | 'status' | 'channel' | 'division' | 'campus' | 'slaStatus' | 'lastUpdated' | 'resolvedAt' | 'closedAt' | 'firstResponse' | 'tags';
 export type SLAFilterValue = 'all' | 'breached' | 'at-risk';
 
 const CHANNEL_OPTIONS: TicketChannel[] = ['Phone', 'Walk-in', 'Social Media', 'Email', 'Web', 'Form'];
@@ -114,6 +114,7 @@ export function TicketFilters({
     details: t('detailsCol'),
     date: t('dateCreatedCol'),
     assignedTo: t('assignedTechCol'),
+    assignedAt: t('assignedTime'),
     priority: t('priorityCol'),
     status: t('statusCol'),
     channel: t('channelCol'),
@@ -147,6 +148,7 @@ export function TicketFilters({
 
     const exportData = data.map(t => {
       const created = toDate(t.createdAt);
+      const assigned = toDate(t.assignedAt || (t.assignedTo ? t.createdAt : null));
       const updated = toDate(t.updatedAt);
       const resolved = toDate(t.resolvedAt);
       const closed = toDate(t.closedAt);
@@ -156,6 +158,8 @@ export function TicketFilters({
         'Ticket ID': t.ticketNumber || t.id.substring(0, 4),
         'Created Date': formatDatePart(created, 'date'),
         'Created Time': formatDatePart(created, 'time'),
+        'Assigned Date': formatDatePart(assigned, 'date'),
+        'Assigned Time': formatDatePart(assigned, 'time'),
         'Last update Date': formatDatePart(updated, 'date'),
         'Last update Time': formatDatePart(updated, 'time'),
         'Resolved Time': formatDatePart(resolved, 'time'),

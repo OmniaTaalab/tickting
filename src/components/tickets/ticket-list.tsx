@@ -32,6 +32,7 @@ const defaultVisibleColumns: Record<ColumnId, boolean> = {
   details: true,
   date: true,
   assignedTo: true,
+  assignedAt: true,
   priority: true,
   status: true,
   channel: true,
@@ -246,6 +247,7 @@ export const TicketList = memo(function TicketList({
               {visibleColumns.details && <TableHead>{t('detailsCol')}</TableHead>}
               {visibleColumns.date && <><TableHead>{t('dateCreatedCol')}</TableHead><TableHead>{t('timeCreatedCol')}</TableHead></>}
               {visibleColumns.assignedTo && <TableHead>{t('assignedTechCol')}</TableHead>}
+              {visibleColumns.assignedAt && <><TableHead>{t('dateAssignedCol')}</TableHead><TableHead>{t('timeAssignedCol')}</TableHead></>}
               {visibleColumns.priority && <TableHead>{t('priorityCol')}</TableHead>}
               {visibleColumns.status && <TableHead>{t('statusCol')}</TableHead>}
               {visibleColumns.channel && <TableHead>{t('channelCol')}</TableHead>}
@@ -264,6 +266,7 @@ export const TicketList = memo(function TicketList({
                 {visibleColumns.details && <TableCell><Skeleton className="h-5 w-48" /><Skeleton className="h-3 w-32 mt-1" /></TableCell>}
                 {visibleColumns.date && <><TableCell><Skeleton className="h-5 w-24" /></TableCell><TableCell><Skeleton className="h-5 w-16" /></TableCell></>}
                 {visibleColumns.assignedTo && <TableCell><Skeleton className="h-8 w-28" /></TableCell>}
+                {visibleColumns.assignedAt && <><TableCell><Skeleton className="h-5 w-24" /></TableCell><TableCell><Skeleton className="h-5 w-16" /></TableCell></>}
                 {visibleColumns.priority && <TableCell><Skeleton className="h-5 w-20" /></TableCell>}
                 {visibleColumns.status && <TableCell><Skeleton className="h-6 w-20" /></TableCell>}
                 {visibleColumns.channel && <TableCell><Skeleton className="h-8 w-24" /></TableCell>}
@@ -328,6 +331,12 @@ export const TicketList = memo(function TicketList({
                 </>
               )}
               {visibleColumns.assignedTo && <TableHead>{t('assignedTechCol')}</TableHead>}
+              {visibleColumns.assignedAt && (
+                <>
+                  <TableHead>{t('dateAssignedCol')}</TableHead>
+                  <TableHead>{t('timeAssignedCol')}</TableHead>
+                </>
+              )}
               {visibleColumns.priority && <TableHead>{t('priorityCol')}</TableHead>}
               {visibleColumns.status && <TableHead>{t('statusCol')}</TableHead>}
               {visibleColumns.channel && <TableHead>{t('channelCol')}</TableHead>}
@@ -423,6 +432,16 @@ export const TicketList = memo(function TicketList({
                       <span className="text-sm text-muted-foreground italic ps-10">{t('unassigned')}</span>
                     )}
                   </TableCell>}
+                  {visibleColumns.assignedAt && (
+                    <>
+                      <TableCell onClick={() => handleRowClick(ticket.id)} className="cursor-pointer">
+                        <div className="text-sm">{ticket.assignedTo ? (formatTicketDate(ticket.assignedAt || ticket.createdAt) || t('na')) : <NotYet />}</div>
+                      </TableCell>
+                      <TableCell onClick={() => handleRowClick(ticket.id)} className="cursor-pointer">
+                        <div className="text-sm font-medium">{ticket.assignedTo ? (formatTicketTimeOnly(ticket.assignedAt || ticket.createdAt) || t('na')) : <NotYet />}</div>
+                      </TableCell>
+                    </>
+                  )}
                   {visibleColumns.priority && (
                     <TableCell onClick={() => handleRowClick(ticket.id)} className="cursor-pointer">
                       <TicketPriorityDisplay priority={ticket.priority} />

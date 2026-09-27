@@ -873,6 +873,14 @@ export default function TicketDetailPage() {
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t('parentEmailLabel')}: <span className="text-slate-900 normal-case font-black">{ticket.parentEmail || ticket.createdBy.email || t('noEmail')}</span></p>
                   </div>
               </div>
+
+              {ticket.assignedTo && (
+                <div className="space-y-2 ps-4 border-s-2 border-blue-200 relative pt-2">
+                    <div className="absolute -start-[18px] top-3.5 h-3 w-3 rounded-full bg-blue-600 border-2 border-white" />
+                    <p className="text-sm font-bold text-slate-800">{t('ticketAssignedToMsg', { name: ticket.assignedTo.name })}</p>
+                    <p className="text-[10px] text-blue-600 font-bold">{toDate(ticket.assignedAt || ticket.createdAt)?.toLocaleString()}</p>
+                </div>
+              )}
           </div>
         </div>
 
@@ -927,6 +935,18 @@ export default function TicketDetailPage() {
               <DetailRow label={t('grade')} value={ticket.gradeName || t('na')} />
               <DetailRow label={t('category')} value={ticket.departmentName || t('na')} />
               <DetailRow label={t('assignedTo')} value={ticket.assignedTo?.name || t('unassigned')} />
+              <DetailRow 
+                label={t('assignedTime')} 
+                value={
+                  ticket.assignedTo ? (
+                    <span className="font-semibold text-slate-800">
+                      {toDate(ticket.assignedAt || ticket.createdAt)?.toLocaleString() || t('na')}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 italic text-xs">{t('notAssignedYet')}</span>
+                  )
+                } 
+              />
               <DetailRow label={t('channel')} value={t(ticket.channel) || ticket.channel} />
               <DetailRow label={t('priority')} value={<span className="font-bold">{t(ticket.priority.toLowerCase())}</span>} />
               <DetailRow label={t('reopened')} value={<span className="font-bold text-orange-600">{ticket.reopenedCount || 0}</span>} />

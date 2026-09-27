@@ -46,17 +46,14 @@ export function AuthInitializer({ children }: { children: React.ReactNode }) {
         if (!userDoc.exists()) {
           setShowCompleteProfile(true);
         } else {
-          // LOGIN LOGIC: Set user to AVAILABLE automatically when they first load the app while logged in
-          if (!hasSetAvailable.current) {
+          // If a new user doesn't have any status field at all, initialize it once
+          const userData = userDoc.data();
+          if (!userData?.status && !hasSetAvailable.current) {
             try {
-              // We only set them to available once per app mount to respect their choice if they manually toggle to busy later
-              const result = await toggleUserStatusAction(user.uid, 'Available');
-              if (result && !result.success) {
-                console.warn("Auto-status update note:", result.message);
-              }
+              await toggleUserStatusAction(user.uid, 'Available');
               hasSetAvailable.current = true;
             } catch (e) {
-              console.warn("Auto-status update not available:", e);
+              console.warn("Initial status setup note:", e);
             }
           }
 

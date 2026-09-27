@@ -84,6 +84,7 @@ export async function reassignTicketAction(
 
         // ANY REASSIGNMENT TO A HUMAN MAKES IT OPEN
         updates.status = 'Open';
+        updates.assignedAt = FieldValue.serverTimestamp();
 
         await db.collection('ticket-events').add({
             ticketId: ticketId,
@@ -97,6 +98,7 @@ export async function reassignTicketAction(
     } else {
         // UNASSIGNED -> QUEUE
         updates.status = 'Queue';
+        updates.assignedAt = FieldValue.delete();
         newAssigneePayload = null;
     }
 

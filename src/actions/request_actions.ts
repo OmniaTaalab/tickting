@@ -78,6 +78,7 @@ export async function approveRequestAction(
                     email: newAssignee.email || '',
                     avatarUrl: newAssignee.avatarUrl,
                 } : null,
+                assignedAt: newAssignee ? FieldValue.serverTimestamp() : null,
                 status: newStatus,
                 updatedAt: FieldValue.serverTimestamp(),
             });
@@ -109,6 +110,7 @@ export async function approveRequestAction(
 
             await db.collection('tickets').doc(ticketId).update({
                 assignedTo: assigneeData,
+                assignedAt: assigneeData ? FieldValue.serverTimestamp() : FieldValue.delete(),
                 status: status,
                 updatedAt: FieldValue.serverTimestamp(),
             });
