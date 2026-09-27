@@ -65,7 +65,7 @@ export function DeleteUserDialog({ user, isOpen, onClose }: DeleteUserDialogProp
             <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-bold">Permanently delete user?</AlertDialogTitle>
             <AlertDialogDescription className="text-slate-500">
-                This will delete <strong>{user.name}</strong> from the database and <strong>permanently revoke their login access</strong>. This action cannot be undone.
+                This will delete <strong>{user.name}</strong> from the database and <strong>permanently revoke their login access</strong>. Any open tickets assigned to this employee will be automatically reassigned to available staff.
             </AlertDialogDescription>
             </AlertDialogHeader>
              {state.errors?.form && (

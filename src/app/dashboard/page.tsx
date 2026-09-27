@@ -158,7 +158,7 @@ function DashboardPage() {
   const stats = useMemo(() => {
     if (!performanceFilteredTickets || !departments) return null;
 
-    const openCount = performanceFilteredTickets.filter(t => (t.status || 'Open') === 'Open').length;
+    const openCount = performanceFilteredTickets.filter(t => t.status === 'Open').length;
     const pendingCount = performanceFilteredTickets.filter(t => {
         const s = t.status;
         return s === 'Queue' || s === 'Waiting' || s === 'In Progress';
@@ -203,7 +203,7 @@ function DashboardPage() {
       ? Math.round((compliantCount / assignedTickets.length) * 100) 
       : 100;
 
-    const resolvedCount = performanceFilteredTickets.filter(t => t.status === 'Resolved').length;
+    const resolvedCount = performanceFilteredTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
     const reopenedCount = performanceFilteredTickets.filter(t => (t.reopenedCount || 0) > 0).length;
 
     return { openCount, pendingCount, complianceRate, resolvedCount, reopenedCount };

@@ -53,7 +53,7 @@ export function DivisionHealthCards({ tickets, performanceTickets }: DivisionHea
       const divisionPerfTickets = performanceTickets.filter(t => t.divisionId === division.id);
       
       const openCount = divisionTickets.filter(t => t.status === 'Open').length;
-      const resolvedCount = divisionPerfTickets.filter(t => t.status === 'Resolved').length;
+      const resolvedCount = divisionPerfTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
       
       const breachedCount = divisionTickets.filter(t => {
         // SLA requirements: stop at resolution, closure, or response
@@ -91,7 +91,7 @@ export function DivisionHealthCards({ tickets, performanceTickets }: DivisionHea
 
     if (uncategorizedTickets.length > 0) {
       const openCount = uncategorizedTickets.filter(t => t.status === 'Open').length;
-      const resolvedCount = uncategorizedPerfTickets.filter(t => t.status === 'Resolved').length;
+      const resolvedCount = uncategorizedPerfTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
       
       const breachedCount = uncategorizedTickets.filter(t => {
         const isFinished = ['Resolved', 'Closed'].includes(t.status);
