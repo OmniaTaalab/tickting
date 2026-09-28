@@ -10,10 +10,11 @@ import { DEFAULT_SLA_SETTINGS } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent } from '@/components/ui/card';
-import { AlertTriangle, CheckCircle2, Inbox, Filter, Calendar as CalendarIcon } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Inbox, Filter, Calendar as CalendarIcon, Search, RotateCcw, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { 
     Select, 
     SelectContent, 
@@ -131,7 +132,10 @@ export default function TasksPage() {
     const { t, isRTL } = useLanguage();
     const [now, setNow] = useState(new Date());
 
+    // Filters
+    const [searchQuery, setSearchQuery] = useState<string>('');
     const [statusFilter, setStatusFilter] = useState<string>('all');
+    const [priorityFilter, setPriorityFilter] = useState<string>('all');
     const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
     const [slaBreachedOnly, setSlaBreachedOnly] = useState<boolean>(false);
 
@@ -169,7 +173,30 @@ export default function TasksPage() {
     const activeTickets = useMemo(() => {
         if (!departments) return [];
         let result = [...personalTickets];
-        if (statusFilter !== 'all') result = result.filter(t => t.status === statusFilter);
+
+        // Search query
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase().trim();
+            result = result.filter(t => 
+                (t.subject && t.subject.toLowerCase().includes(q)) ||
+                (t.ticketNumber && String(t.ticketNumber).includes(q)) ||
+                (t.id && t.id.toLowerCase().includes(q)) ||
+                (t.parentName && t.parentName.toLowerCase().includes(q)) ||
+                (t.campusName && t.campusName.toLowerCase().includes(q))
+            );
+        }
+
+        // Status
+        if (statusFilter !== 'all') {
+            result = result.filter(t => t.status === statusFilter);
+        }
+
+        // Priority
+        if (priorityFilter !== 'all') {
+            result = result.filter(t => (t.priority || 'Normal') === priorityFilter);
+        }
+
+        // Date range
         if (dateRange?.from) {
             const start = startOfDay(dateRange.from!);
             const end = dateRange.to ? endOfDay(dateRange.to) : endOfDay(dateRange.from!);
@@ -178,6 +205,8 @@ export default function TasksPage() {
                 return d && d >= start && d <= end;
             });
         }
+
+        // SLA breached only
         if (slaBreachedOnly) {
             result = result.filter(t => {
                 const start = toDate(t.assignedAt || t.createdAt);
@@ -212,7 +241,17 @@ export default function TasksPage() {
             });
         }
         return result.sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0));
-    }, [personalTickets, statusFilter, dateRange, slaBreachedOnly, slaSettings, now, departments]);
+    }, [personalTickets, searchQuery, statusFilter, priorityFilter, dateRange, slaBreachedOnly, slaSettings, now, departments]);
+
+    const handleResetFilters = () => {
+        setSearchQuery('');
+        setStatusFilter('all');
+        setPriorityFilter('all');
+        setDateRange(undefined);
+        setSlaBreachedOnly(false);
+    };
+
+    const hasActiveFilters = searchQuery.trim() !== '' || statusFilter !== 'all' || priorityFilter !== 'all' || dateRange !== undefined || slaBreachedOnly;
 
     if (isProfileLoading || areTicketsLoading) {
         return <div className="p-8 space-y-6"><Skeleton className="h-32 w-full rounded-2xl" /><Skeleton className="h-96 w-full" /></div>;
@@ -234,24 +273,85 @@ export default function TasksPage() {
                 </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 bg-white p-4 rounded-xl border shadow-sm">
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-[160px] h-9 text-xs font-bold bg-slate-50/50 rounded-lg">
-                        <SelectValue placeholder={t('status')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">{t('allStatus')}</SelectItem>
-                        <SelectItem value="Open">{t('open')}</SelectItem>
-                        <SelectItem value="In Progress">{t('inProgress')}</SelectItem>
-                        <SelectItem value="Waiting">{t('waiting')}</SelectItem>
-                    </SelectContent>
-                </Select>
-                <div className={cn("flex items-center gap-3 px-2", isRTL ? "mr-auto" : "ml-auto")}>
-                    <Label htmlFor="sla-breached" className="text-[10px] font-black text-slate-500 uppercase tracking-widest cursor-pointer">
-                        {t('slaBreachedOnly')}
-                    </Label>
-                    <Switch id="sla-breached" checked={slaBreachedOnly} onCheckedChange={setSlaBreachedOnly} className="scale-75 data-[state=checked]:bg-red-500" />
+            {/* FILTER TOOLBAR */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-center">
+                    {/* Search */}
+                    <div className="relative sm:col-span-2 lg:col-span-2">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <Input
+                            placeholder={t('searchTasksPlaceholder')}
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-9 h-10 bg-slate-50 border-slate-200 rounded-xl text-xs focus:bg-white transition-colors"
+                        />
+                        {searchQuery && (
+                            <button 
+                                onClick={() => setSearchQuery('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                            >
+                                <X className="h-3.5 w-3.5" />
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Status */}
+                    <div>
+                        <Select value={statusFilter} onValueChange={setStatusFilter}>
+                            <SelectTrigger className="h-10 text-xs font-semibold bg-slate-50 border-slate-200 rounded-xl">
+                                <SelectValue placeholder={t('filterByStatus')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allStatus')}</SelectItem>
+                                <SelectItem value="Open">{t('open')}</SelectItem>
+                                <SelectItem value="In Progress">{t('inProgress')}</SelectItem>
+                                <SelectItem value="Waiting">{t('waiting')}</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Priority */}
+                    <div>
+                        <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+                            <SelectTrigger className="h-10 text-xs font-semibold bg-slate-50 border-slate-200 rounded-xl">
+                                <SelectValue placeholder={t('filterByPriority')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allPriorities')}</SelectItem>
+                                <SelectItem value="Urgent">{t('urgent')}</SelectItem>
+                                <SelectItem value="High">{t('high')}</SelectItem>
+                                <SelectItem value="Normal">{t('normal')}</SelectItem>
+                                <SelectItem value="Low">{t('low')}</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* SLA Breached Toggle */}
+                    <div className="flex items-center justify-between sm:justify-end gap-3 px-2 bg-slate-50 h-10 rounded-xl border border-slate-200/70">
+                        <Label htmlFor="sla-breached" className="text-[11px] font-bold text-slate-600 cursor-pointer">
+                            {t('slaBreachedOnly')}
+                        </Label>
+                        <Switch id="sla-breached" checked={slaBreachedOnly} onCheckedChange={setSlaBreachedOnly} className="scale-75 data-[state=checked]:bg-red-500" />
+                    </div>
                 </div>
+
+                {/* Filter Summary & Reset */}
+                {hasActiveFilters && (
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                        <span className="text-slate-500 font-medium">
+                            {activeTickets.length} / {personalTickets.length} {t('tasks')}
+                        </span>
+                        <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={handleResetFilters} 
+                            className="h-7 text-xs font-bold text-slate-500 hover:text-red-600 gap-1.5"
+                        >
+                            <RotateCcw className="h-3 w-3" />
+                            {t('resetFilters')}
+                        </Button>
+                    </div>
+                )}
             </div>
 
             <Card className="border border-slate-100 shadow-sm overflow-hidden rounded-xl bg-white">
@@ -263,7 +363,13 @@ export default function TasksPage() {
                             <div className="p-4 rounded-full bg-slate-50 mb-4">
                                 <Inbox className="h-8 w-8 text-slate-200" />
                             </div>
-                            <p className="text-slate-500 font-bold text-sm">{t('noTasks')}</p>
+                            <p className="text-slate-500 font-bold text-sm">{t('noTasksFound')}</p>
+                            {hasActiveFilters && (
+                                <Button variant="outline" size="sm" onClick={handleResetFilters} className="mt-4 gap-2">
+                                    <RotateCcw className="h-3.5 w-3.5" />
+                                    {t('resetFilters')}
+                                </Button>
+                            )}
                         </div>
                     )}
                 </div>

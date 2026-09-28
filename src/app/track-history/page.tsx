@@ -7,7 +7,8 @@ import type {
   TicketTransferRecord,
   UserProfile,
   Department,
-  Campus
+  Campus,
+  Ticket
 } from '@/lib/types';
 import { useLanguage } from '@/hooks/use-language';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -54,11 +55,16 @@ export default function TrackHistoryPage() {
   );
   const { data: directTransfers, isLoading: isTransfersLoading } = useCollection<TicketTransferRecord>(transfersQuery);
 
-  // const ticketsQuery = useMemoFirebase(
-  //   () => (firestore ? query(collection(firestore, 'tickets')) : null),
-  //   [firestore]
-  // );
-  // const { data: allTickets } = useCollection<Ticket>(ticketsQuery);
+  const ticketsQuery = useMemoFirebase(
+    () => (firestore ? query(collection(firestore, 'tickets')) : null),
+    [firestore]
+  );
+  const { data: allTickets } = useCollection<Ticket>(ticketsQuery);
+
+  const ticketsMap = useMemo(() => {
+    if (!allTickets) return new Map<string, Ticket>();
+    return new Map(allTickets.map(t => [t.id, t]));
+  }, [allTickets]);
 
   const departmentsQuery = useMemoFirebase(
     () => (firestore ? query(collection(firestore, 'departments')) : null),
@@ -147,6 +153,18 @@ export default function TrackHistoryPage() {
   // Filtered by UI controls
   const filteredTransfers = useMemo(() => {
     return scopedTransfers.filter(item => {
+      const matchingTicket = ticketsMap.get(item.ticketId);
+      const effectiveToUser = (item.toUser && item.toUser.name)
+        ? item.toUser
+        : (matchingTicket && matchingTicket.departmentId === item.toDepartmentId && matchingTicket.assignedTo?.name
+            ? {
+                userId: matchingTicket.assignedTo.userId,
+                name: matchingTicket.assignedTo.name,
+                avatarUrl: matchingTicket.assignedTo.avatarUrl || '',
+                email: matchingTicket.assignedTo.email || '',
+              }
+            : null);
+
       // Search
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
@@ -156,7 +174,7 @@ export default function TrackHistoryPage() {
         const fromDeptMatch = item.fromDepartmentName?.toLowerCase().includes(q) || false;
         const toDeptMatch = item.toDepartmentName?.toLowerCase().includes(q) || false;
         const fromUserMatch = item.fromUser?.name?.toLowerCase().includes(q) || false;
-        const toUserMatch = item.toUser?.name?.toLowerCase().includes(q) || false;
+        const toUserMatch = (item.toUser?.name?.toLowerCase().includes(q) || effectiveToUser?.name?.toLowerCase().includes(q)) || false;
         const campusMatch = item.campusName?.toLowerCase().includes(q) || false;
 
         if (!numMatch && !titleMatch && !subjectMatch && !fromDeptMatch && !toDeptMatch && !fromUserMatch && !toUserMatch && !campusMatch) {
@@ -363,6 +381,18 @@ export default function TrackHistoryPage() {
           filteredTransfers.map(record => {
             const transferDate = toDate(record.transferredAt);
             const dateStr = transferDate ? format(transferDate, 'MMM d, yyyy • h:mm a') : '—';
+            
+            const matchingTicket = ticketsMap.get(record.ticketId);
+            const effectiveToUser = (record.toUser && record.toUser.name)
+              ? record.toUser
+              : (matchingTicket && matchingTicket.departmentId === record.toDepartmentId && matchingTicket.assignedTo?.name
+                  ? {
+                      userId: matchingTicket.assignedTo.userId,
+                      name: matchingTicket.assignedTo.name,
+                      avatarUrl: matchingTicket.assignedTo.avatarUrl || '',
+                      email: matchingTicket.assignedTo.email || '',
+                    }
+                  : null);
 
             return (
               <Card
@@ -438,13 +468,13 @@ export default function TrackHistoryPage() {
                       </div>
                       <div className="flex items-center gap-2 pt-1 border-t border-blue-200/60">
                         <Avatar className="h-6 w-6">
-                          <AvatarImage src={record.toUser?.avatarUrl} />
+                          <AvatarImage src={effectiveToUser?.avatarUrl} />
                           <AvatarFallback className="text-[10px] bg-blue-200 text-blue-800 font-bold">
-                            {record.toUser?.name?.charAt(0) || 'U'}
+                            {effectiveToUser?.name?.charAt(0) || 'U'}
                           </AvatarFallback>
                         </Avatar>
                         <span className="text-xs text-blue-900 font-semibold truncate">
-                          {record.toUser?.name || t('unassigned')}
+                          {effectiveToUser?.name || t('unassigned')}
                         </span>
                       </div>
                     </div>

@@ -15,7 +15,7 @@ import { useCollection, useFirebase, useMemoFirebase, useUser, useDoc } from '@/
 import { collection, query, orderBy, doc } from 'firebase/firestore';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Search, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { PlusCircle, Search, MoreHorizontal, Pencil, Trash2, RotateCcw, X, Filter } from 'lucide-react';
 import { CreateUserLoginDialog } from './_components/create-user-login-dialog';
 import { CreateUserDialog } from './_components/create-user-dialog';
 import { DeleteUserDialog } from './_components/delete-user-dialog';
@@ -30,6 +30,8 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useLanguage } from '@/hooks/use-language';
 
 const avatarBgColors = [
     'bg-[#ef4444]', // Red
@@ -153,6 +155,7 @@ function StaffCard({
 export default function ManageUsersPage() {
     const { user: currentUser, isUserLoading } = useUser();
     const { firestore } = useFirebase();
+    const { t } = useLanguage();
     
     const [isCreateUserOpen, setCreateUserOpen] = useState(false);
     const [isLoginOpen, setLoginOpen] = useState(false);
@@ -160,7 +163,13 @@ export default function ManageUsersPage() {
     const [isEditOpen, setEditOpen] = useState(false);
     const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
     const [dialogKey, setDialogKey] = useState(0);
+
+    // Filters
     const [searchTerm, setSearchTerm] = useState('');
+    const [roleFilter, setRoleFilter] = useState<string>('all');
+    const [departmentFilter, setDepartmentFilter] = useState<string>('all');
+    const [divisionFilter, setDivisionFilter] = useState<string>('all');
+    const [statusFilter, setStatusFilter] = useState<string>('all');
 
     const userProfileRef = useMemoFirebase(() => 
         currentUser && firestore ? doc(firestore, 'users', currentUser.uid) : null,
@@ -174,29 +183,63 @@ export default function ManageUsersPage() {
     }, [firestore]);
     const { data: allUsers, isLoading: areUsersLoading } = useCollection<UserProfile>(usersQuery);
 
-    const deptsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'departments')) : null, [firestore]);
+    const deptsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'departments'), orderBy('name', 'asc')) : null, [firestore]);
     const { data: departments } = useCollection<Department>(deptsQuery);
     const departmentsMap = useMemo(() => new Map(departments?.map(d => [d.id, d.name])), [departments]);
 
-    const divisionsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'divisions')) : null, [firestore]);
+    const divisionsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'divisions'), orderBy('name', 'asc')) : null, [firestore]);
     const { data: divisions } = useCollection<Division>(divisionsQuery);
     const divisionsMap = useMemo(() => new Map(divisions?.map(d => [d.id, d.name])), [divisions]);
 
     const filteredUsers = useMemo(() => {
         if (!allUsers) return [];
         
-        // Filter only Managers for this view
-        let result = allUsers.filter(u => u.role === 'Manager');
+        let result = [...allUsers];
+
+        // Role filter
+        if (roleFilter !== 'all') {
+            result = result.filter(u => u.role === roleFilter);
+        }
         
-        if (searchTerm) {
-            const lowerSearch = searchTerm.toLowerCase();
+        // Department filter
+        if (departmentFilter !== 'all') {
+            result = result.filter(u => u.departmentId === departmentFilter);
+        }
+
+        // Division filter
+        if (divisionFilter !== 'all') {
+            result = result.filter(u => u.divisionIds && u.divisionIds.includes(divisionFilter));
+        }
+
+        // Status filter
+        if (statusFilter !== 'all') {
+            result = result.filter(u => {
+                if (statusFilter === 'Available') return u.status === 'Available' || !u.status;
+                return u.status === statusFilter;
+            });
+        }
+
+        // Search text
+        if (searchTerm.trim()) {
+            const lowerSearch = searchTerm.toLowerCase().trim();
             result = result.filter(u => 
-                u.name.toLowerCase().includes(lowerSearch) || 
-                u.email.toLowerCase().includes(lowerSearch)
+                (u.name && u.name.toLowerCase().includes(lowerSearch)) || 
+                (u.email && u.email.toLowerCase().includes(lowerSearch))
             );
         }
+
         return result;
-    }, [allUsers, searchTerm]);
+    }, [allUsers, roleFilter, departmentFilter, divisionFilter, statusFilter, searchTerm]);
+
+    const handleResetFilters = () => {
+        setSearchTerm('');
+        setRoleFilter('all');
+        setDepartmentFilter('all');
+        setDivisionFilter('all');
+        setStatusFilter('all');
+    };
+
+    const hasActiveFilters = searchTerm.trim() !== '' || roleFilter !== 'all' || departmentFilter !== 'all' || divisionFilter !== 'all' || statusFilter !== 'all';
 
     const isLoading = isUserLoading || isProfileLoading || areUsersLoading;
 
@@ -251,32 +294,115 @@ export default function ManageUsersPage() {
             )}
 
             {/* PAGE HEADER */}
-            <div className="space-y-1">
-                <h1 className="text-3xl font-bold tracking-tight text-slate-900 font-headline">Staff directory</h1>
-                <p className="text-sm text-slate-500 font-medium">
-                    {filteredUsers.length} staff members across {departments?.length || 0} departments
-                </p>
-            </div>
-
-            {/* SEARCH & ACTIONS */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="relative w-full max-w-sm">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input
-                        type="search"
-                        placeholder="Search managers..."
-                        className="pl-10 h-11 bg-white border-slate-200 rounded-xl focus:ring-[#1e3a8a] shadow-sm"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                    <h1 className="text-3xl font-bold tracking-tight text-slate-900 font-headline">Staff Directory</h1>
+                    <p className="text-sm text-slate-500 font-medium">
+                        {filteredUsers.length} staff members across {departments?.length || 0} departments
+                    </p>
                 </div>
                 <Button 
                     onClick={() => { setDialogKey(k => k + 1); setCreateUserOpen(true); }} 
-                    className="bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white rounded-xl h-11 px-6 shadow-md gap-2 transition-all hover:scale-105 active:scale-95"
+                    className="bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white rounded-xl h-11 px-6 shadow-md gap-2 transition-all hover:scale-105 active:scale-95 self-start sm:self-auto"
                 >
                     <PlusCircle className="h-4 w-4" />
-                    Add Manager
+                    {t('addEmployee')}
                 </Button>
+            </div>
+
+            {/* FILTERS TOOLBAR */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                    {/* Search */}
+                    <div className="relative lg:col-span-1 sm:col-span-2">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <Input
+                            type="search"
+                            placeholder={t('searchUsersPlaceholder')}
+                            className="pl-9 h-10 bg-slate-50 border-slate-200 rounded-xl text-xs focus:bg-white transition-colors"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+
+                    {/* Role Filter */}
+                    <div>
+                        <Select value={roleFilter} onValueChange={setRoleFilter}>
+                            <SelectTrigger className="h-10 bg-slate-50 border-slate-200 rounded-xl text-xs font-semibold">
+                                <SelectValue placeholder={t('allRoles')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allRoles')}</SelectItem>
+                                <SelectItem value="Manager">Manager</SelectItem>
+                                <SelectItem value="Employee">Employee</SelectItem>
+                                <SelectItem value="Admin">Admin</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Department Filter */}
+                    <div>
+                        <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                            <SelectTrigger className="h-10 bg-slate-50 border-slate-200 rounded-xl text-xs font-semibold">
+                                <SelectValue placeholder={t('filterByDepartment')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allCategories')}</SelectItem>
+                                {departments?.map(dept => (
+                                    <SelectItem key={dept.id} value={dept.id}>{dept.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Division Filter */}
+                    <div>
+                        <Select value={divisionFilter} onValueChange={setDivisionFilter}>
+                            <SelectTrigger className="h-10 bg-slate-50 border-slate-200 rounded-xl text-xs font-semibold">
+                                <SelectValue placeholder={t('filterByDivision')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allDivisions')}</SelectItem>
+                                {divisions?.map(div => (
+                                    <SelectItem key={div.id} value={div.id}>{div.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Status Filter */}
+                    <div>
+                        <Select value={statusFilter} onValueChange={setStatusFilter}>
+                            <SelectTrigger className="h-10 bg-slate-50 border-slate-200 rounded-xl text-xs font-semibold">
+                                <SelectValue placeholder={t('allAvailability')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allAvailability')}</SelectItem>
+                                <SelectItem value="Available">{t('statusAvailable')}</SelectItem>
+                                <SelectItem value="Busy">{t('statusBusy')}</SelectItem>
+                                <SelectItem value="Away">{t('statusAway')}</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+
+                {/* Filter Summary & Reset */}
+                {hasActiveFilters && (
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                        <span className="text-slate-500 font-medium">
+                            {filteredUsers.length} / {allUsers?.length || 0} {t('systemEmployees')}
+                        </span>
+                        <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={handleResetFilters} 
+                            className="h-7 text-xs font-bold text-slate-500 hover:text-red-600 gap-1.5"
+                        >
+                            <RotateCcw className="h-3 w-3" />
+                            {t('resetFilters')}
+                        </Button>
+                    </div>
+                )}
             </div>
 
             {/* STAFF GRID */}
@@ -302,10 +428,16 @@ export default function ManageUsersPage() {
                     <div className="p-4 rounded-full bg-slate-100 mb-4">
                         <Search className="h-8 w-8 text-slate-400" />
                     </div>
-                    <h3 className="text-lg font-bold text-slate-800">No managers found</h3>
-                    <p className="text-slate-500 max-w-xs mx-auto mt-1">
-                        Try adjusting your search term or add a new manager to the directory.
+                    <h3 className="text-lg font-bold text-slate-800">{t('noUsersFound')}</h3>
+                    <p className="text-slate-500 max-w-xs mx-auto mt-1 text-sm">
+                        Try adjusting your filters or search term to find staff members.
                     </p>
+                    {hasActiveFilters && (
+                        <Button variant="outline" size="sm" onClick={handleResetFilters} className="mt-4 gap-2">
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            {t('resetFilters')}
+                        </Button>
+                    )}
                 </div>
             )}
         </div>

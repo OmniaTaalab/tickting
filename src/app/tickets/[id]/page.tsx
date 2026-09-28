@@ -239,7 +239,7 @@ function Message({
 
 const ReplySchema = z.object({ replyText: z.string().min(1, 'Reply cannot be empty.') });
 
-function ReplyArea({ ticket }: { ticket: Ticket }) {
+function ReplyArea({ ticket, isTransferredAway }: { ticket: Ticket; isTransferredAway?: boolean }) {
   const { user: currentUser } = useAuthUser();
   const { toast } = useToast();
   const { t, isRTL } = useLanguage();
@@ -289,6 +289,22 @@ function ReplyArea({ ticket }: { ticket: Ticket }) {
   const isFinished = ticket.status === 'Resolved' || ticket.status === 'Closed' || ticket.status === 'Duplicate';
   const isCreator = replierId === ticket.createdBy.userId;
   const isInternal = activeTab === 'note';
+
+  if (isTransferredAway) {
+      return (
+          <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-6 text-center flex flex-col items-center gap-3">
+              <div className="p-3 bg-amber-100 rounded-full text-amber-700">
+                  <Lock className="h-6 w-6" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-amber-900">{t('transferredReadOnlyTitle')}</p>
+                <p className="text-xs text-amber-700 max-w-md">
+                    {t('transferredReadOnlySub', { department: ticket.departmentName || 'another department' })}
+                </p>
+              </div>
+          </div>
+      );
+  }
 
   if (isFinished && !isCreator && !isInternal) {
       return (
@@ -727,6 +743,15 @@ export default function TicketDetailPage() {
 
   const updateTicketStatus = (newStatus: TicketStatus) => {
       if (!ticketRef || !ticket) return;
+
+      if (isTransferredAway) {
+          toast({ 
+              variant: "destructive", 
+              title: "Error", 
+              description: t('permissionDeniedTransferred', { department: ticket.departmentName || 'another department' }) 
+          });
+          return;
+      }
       
       const updates: Record<string, any> = { status: newStatus, updatedAt: serverTimestamp() };
       
@@ -836,8 +861,15 @@ export default function TicketDetailPage() {
     };
   }, [ticket, slaSettings, departments, t]);
 
-  const isStaff = userProfile && ['Admin', 'Employee', 'Manager'].includes(userProfile.role);
-  const canShare = isStaff && (userProfile?.role === 'Admin' || userProfile?.role === 'Manager');
+  const isStaff = Boolean(userProfile && ['Admin', 'Employee', 'Manager'].includes(userProfile.role));
+  const isTransferredAway = Boolean(
+    isStaff && 
+    userProfile?.role !== 'Admin' && 
+    userProfile?.departmentId && 
+    ticket?.departmentId && 
+    userProfile.departmentId !== ticket.departmentId
+  );
+  const canShare = Boolean(isStaff && (userProfile?.role === 'Admin' || userProfile?.role === 'Manager'));
   const showContent = isStaff || isVerified;
 
   if (isTicketLoading || isProfileLoading) return <div className="space-y-6"><Skeleton className="h-48 w-full" /><div className="grid md:grid-cols-3 gap-6"><Skeleton className="md:col-span-2 h-[500px]" /><Skeleton className="h-[500px]" /></div></div>;
@@ -936,6 +968,13 @@ export default function TicketDetailPage() {
         </DialogContent>
       </Dialog>
 
+      {isTransferredAway && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-2xl flex items-center gap-3 text-xs font-semibold shadow-xs">
+          <Lock className="h-4 w-4 text-amber-600 shrink-0" />
+          <span>{t('transferredReadOnlySub', { department: ticket.departmentName || 'another department' })}</span>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
           <div className="space-y-4 text-start font-body">
               <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
@@ -956,6 +995,11 @@ export default function TicketDetailPage() {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                   <div className="px-3 py-1 bg-red-50 text-rose-600 text-[10px] font-bold rounded-md border border-red-100 uppercase tracking-tight">{ticket.divisionName || 'Operations'} — {ticket.departmentName}</div>
+                  {isTransferredAway && (
+                    <div className="px-2.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-extrabold rounded-md flex items-center gap-1">
+                      <Lock className="h-3 w-3" /> {t('readOnlyTransferredBadge')}
+                    </div>
+                  )}
               </div>
               <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none break-words">{ticket.title || ticket.subject || 'No Subject'}</h1>
           </div>
@@ -991,7 +1035,7 @@ export default function TicketDetailPage() {
                 />
             ))}
           </div>
-          <ReplyArea ticket={ticket} />
+          <ReplyArea ticket={ticket} isTransferredAway={isTransferredAway} />
           <div className="space-y-4 pt-10 text-start">
               <div className="flex items-center gap-2 text-sm font-black text-slate-900 uppercase tracking-widest"><History className="h-4 w-4" /> {t('activityLog')}</div>
               <div className="space-y-4 ps-4 border-s-2 border-slate-100 relative">
@@ -1020,38 +1064,52 @@ export default function TicketDetailPage() {
             <Card className="border-none shadow-sm overflow-hidden rounded-2xl bg-white">
                 <CardHeader className="p-6 pb-2 text-start"><CardTitle className="text-xs font-black text-slate-900 uppercase tracking-widest">{t('actions')}</CardTitle></CardHeader>
                 <CardContent className="p-6 space-y-4">
-                    <Button variant="outline" className="w-full h-10 border-emerald-100 text-emerald-700 text-xs font-bold" onClick={() => updateTicketStatus('Resolved')}><Check className="h-3.5 w-3.5" /> {t('resolve')}</Button>
-                    <div className="grid grid-cols-2 gap-3">
-                        <Button variant="outline" className="h-10 border-blue-100 text-blue-700 text-xs font-bold" onClick={() => updateTicketStatus('Open')}><Inbox className="h-3.5 w-3.5" /> {t('open')}</Button>
-                        <Button variant="outline" className="h-10 border-purple-100 text-purple-700 text-xs font-bold" onClick={() => updateTicketStatus('Queue')}><LayoutList className="h-3.5 w-3.5" /> {t('queue')}</Button>
-                    </div>
-                    <Button variant="outline" className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs" onClick={() => updateTicketStatus('Duplicate')}><Copy className="h-3.5 w-3.5" /> {t('duplicate')}</Button>
-                    <Button variant="outline" className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs" onClick={() => setTransferOpen(true)}><RefreshCcw className="h-3.5 w-3.5" /> {userProfile?.role === 'Employee' ? t('requestTransfer') : t('transferCategory')}</Button>
-                    {userProfile?.role !== 'Employee' ? (
-                        <Button variant="outline" className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs" onClick={() => setAssignOpen(true)}><UserPlus className="h-3.5 w-3.5" /> {t('assignPerson')}</Button>
-                    ) : (
-                        <form action={reassignRequestDispatch}>
-                            <input type="hidden" name="ticketId" value={ticket.id || ''} />
-                            <input type="hidden" name="actorId" value={currentUser?.uid || ''} />
-                            <input type="hidden" name="actorName" value={userProfile?.name || 'User'} />
-                            <Button type="submit" variant="outline" disabled={isReassignRequestPending} className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs">
-                                {isReassignRequestPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
-                                {t('requestReassignment')}
-                            </Button>
-                        </form>
-                    )}
-
-                    {userProfile?.role === 'Admin' && (
-                        <div className="pt-3 border-t border-slate-100">
-                            <Button 
-                                variant="outline" 
-                                className="w-full h-10 border-red-200 bg-red-50/50 text-red-600 hover:bg-red-100 hover:text-red-700 hover:border-red-300 font-bold text-xs gap-2 transition-all cursor-pointer" 
-                                onClick={() => setDeleteDialogOpen(true)}
-                            >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                {t('deleteTicket')}
-                            </Button>
+                    {isTransferredAway ? (
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-start space-y-2">
+                            <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                                <Lock className="h-4 w-4" />
+                                <span>{t('readOnlyTransferredBadge')}</span>
+                            </div>
+                            <p className="text-[11px] text-amber-700 leading-relaxed">
+                                {t('transferredReadOnlySub', { department: ticket.departmentName || 'another department' })}
+                            </p>
                         </div>
+                    ) : (
+                        <>
+                            <Button variant="outline" className="w-full h-10 border-emerald-100 text-emerald-700 text-xs font-bold" onClick={() => updateTicketStatus('Resolved')}><Check className="h-3.5 w-3.5" /> {t('resolve')}</Button>
+                            <div className="grid grid-cols-2 gap-3">
+                                <Button variant="outline" className="h-10 border-blue-100 text-blue-700 text-xs font-bold" onClick={() => updateTicketStatus('Open')}><Inbox className="h-3.5 w-3.5" /> {t('open')}</Button>
+                                <Button variant="outline" className="h-10 border-purple-100 text-purple-700 text-xs font-bold" onClick={() => updateTicketStatus('Queue')}><LayoutList className="h-3.5 w-3.5" /> {t('queue')}</Button>
+                            </div>
+                            <Button variant="outline" className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs" onClick={() => updateTicketStatus('Duplicate')}><Copy className="h-3.5 w-3.5" /> {t('duplicate')}</Button>
+                            <Button variant="outline" className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs" onClick={() => setTransferOpen(true)}><RefreshCcw className="h-3.5 w-3.5" /> {userProfile?.role === 'Employee' ? t('requestTransfer') : t('transferCategory')}</Button>
+                            {userProfile?.role !== 'Employee' ? (
+                                <Button variant="outline" className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs" onClick={() => setAssignOpen(true)}><UserPlus className="h-3.5 w-3.5" /> {t('assignPerson')}</Button>
+                            ) : (
+                                <form action={reassignRequestDispatch}>
+                                    <input type="hidden" name="ticketId" value={ticket.id || ''} />
+                                    <input type="hidden" name="actorId" value={currentUser?.uid || ''} />
+                                    <input type="hidden" name="actorName" value={userProfile?.name || 'User'} />
+                                    <Button type="submit" variant="outline" disabled={isReassignRequestPending} className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs">
+                                        {isReassignRequestPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
+                                        {t('requestReassignment')}
+                                    </Button>
+                                </form>
+                            )}
+
+                            {userProfile?.role === 'Admin' && (
+                                <div className="pt-3 border-t border-slate-100">
+                                    <Button 
+                                        variant="outline" 
+                                        className="w-full h-10 border-red-200 bg-red-50/50 text-red-600 hover:bg-red-100 hover:text-red-700 hover:border-red-300 font-bold text-xs gap-2 transition-all cursor-pointer" 
+                                        onClick={() => setDeleteDialogOpen(true)}
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                        {t('deleteTicket')}
+                                    </Button>
+                                </div>
+                            )}
+                        </>
                     )}
                 </CardContent>
             </Card>

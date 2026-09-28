@@ -4,16 +4,17 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { useCollection, useFirebase, useMemoFirebase, useUser, useDoc } from '@/firebase';
-import { collection, query, where, doc } from 'firebase/firestore';
-import type { TicketEvent, UserProfile } from '@/lib/types';
-import { formatDistanceToNow } from 'date-fns';
+import { collection, query, where, doc, orderBy } from 'firebase/firestore';
+import type { TicketEvent, UserProfile, Department } from '@/lib/types';
+import { formatDistanceToNow, isToday, subDays } from 'date-fns';
 import { arSA } from 'date-fns/locale';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowRightLeft, Clock, CheckCircle2, UserPlus, ShieldAlert, Check, X, Loader2, ArrowRight } from 'lucide-react';
+import { ArrowRightLeft, Clock, CheckCircle2, UserPlus, ShieldAlert, Check, X, Loader2, ArrowRight, Search, Filter, RotateCcw, Building2, Calendar as CalendarIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { approveRequestAction, rejectRequestAction } from '@/actions/request_actions';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -136,6 +137,15 @@ export default function RequestsPage() {
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [reassignRequest, setReassignRequest] = useState<TicketEvent | null>(null);
 
+    // Filter states
+    const [searchQuery, setSearchQuery] = useState('');
+    const [typeFilter, setTypeFilter] = useState<'all' | 'transfer' | 'reassign'>('all');
+    const [departmentFilter, setDepartmentFilter] = useState<string>('all');
+    const [dateFilter, setDateFilter] = useState<'all' | 'today' | '7days' | '30days'>('all');
+
+    const deptsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'departments'), orderBy('name', 'asc')) : null, [firestore]);
+    const { data: departments } = useCollection<Department>(deptsQuery);
+
     const userProfileRef = useMemoFirebase(() => 
         user && firestore ? doc(firestore, 'users', user.uid) : null,
         [user, firestore]
@@ -152,6 +162,16 @@ export default function RequestsPage() {
     }, [firestore, user]);
 
     const { data: requests, isLoading } = useCollection<TicketEvent>(requestsQuery);
+
+    const isWithinDateFilter = (timestamp: any, filter: string) => {
+        if (filter === 'all' || !timestamp) return true;
+        const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+        if (isNaN(d.getTime())) return true;
+        if (filter === 'today') return isToday(d);
+        if (filter === '7days') return d >= subDays(new Date(), 7);
+        if (filter === '30days') return d >= subDays(new Date(), 30);
+        return true;
+    };
 
     const { activeRequests, processedRequests } = useMemo(() => {
         if (!requests) return { activeRequests: [], processedRequests: [] };
@@ -176,11 +196,56 @@ export default function RequestsPage() {
             }
         });
 
-        return {
-            activeRequests: deduplicatedActive,
-            processedRequests: sorted.filter(r => r.status === 'approved' || r.status === 'rejected')
+        const filterItem = (req: TicketEvent) => {
+            // Type filter
+            if (typeFilter === 'transfer' && req.eventType !== 'TICKET_TRANSFER_REQUESTED') return false;
+            if (typeFilter === 'reassign' && req.eventType !== 'TICKET_REASSIGN_REQUESTED') return false;
+
+            // Department filter
+            if (departmentFilter !== 'all') {
+                const fromDept = req.requestMetadata?.fromDepartmentId || req.requestMetadata?.fromDepartmentName;
+                const toDept = req.requestMetadata?.toDepartmentId || req.requestMetadata?.toDepartmentName;
+                if (fromDept !== departmentFilter && toDept !== departmentFilter) {
+                    return false;
+                }
+            }
+
+            // Date filter
+            if (!isWithinDateFilter(req.timestamp, dateFilter)) {
+                return false;
+            }
+
+            // Search query
+            if (searchQuery.trim()) {
+                const q = searchQuery.toLowerCase().trim();
+                const ticketId = (req.ticketId || '').toLowerCase();
+                const msg = (req.message || '').toLowerCase();
+                const reqName = (req.requestMetadata?.requesterName || '').toLowerCase();
+                const fromDeptName = (req.requestMetadata?.fromDepartmentName || '').toLowerCase();
+                const toDeptName = (req.requestMetadata?.toDepartmentName || '').toLowerCase();
+
+                if (!ticketId.includes(q) && !msg.includes(q) && !reqName.includes(q) && !fromDeptName.includes(q) && !toDeptName.includes(q)) {
+                    return false;
+                }
+            }
+
+            return true;
         };
-    }, [requests]);
+
+        return {
+            activeRequests: deduplicatedActive.filter(filterItem),
+            processedRequests: sorted.filter(r => (r.status === 'approved' || r.status === 'rejected') && filterItem(r))
+        };
+    }, [requests, typeFilter, departmentFilter, dateFilter, searchQuery]);
+
+    const handleResetFilters = () => {
+        setSearchQuery('');
+        setTypeFilter('all');
+        setDepartmentFilter('all');
+        setDateFilter('all');
+    };
+
+    const hasActiveFilters = searchQuery.trim() !== '' || typeFilter !== 'all' || departmentFilter !== 'all' || dateFilter !== 'all';
 
     const getTranslatedDescription = (req: TicketEvent) => {
         const metadata = req.requestMetadata;
@@ -282,6 +347,92 @@ export default function RequestsPage() {
             <div className="space-y-1">
                 <h1 className="text-3xl font-black tracking-tight text-slate-900 font-headline">{t('actionRequests')}</h1>
                 <p className="text-slate-500 font-medium">{t('requestsSub')}</p>
+            </div>
+
+            {/* Filter Toolbar */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* Search */}
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <Input
+                            placeholder={t('searchRequestsPlaceholder')}
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-9 bg-slate-50 border-slate-200 text-sm h-10 rounded-xl focus:bg-white transition-colors"
+                        />
+                        {searchQuery && (
+                            <button 
+                                onClick={() => setSearchQuery('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                            >
+                                <X className="h-3.5 w-3.5" />
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Request Type */}
+                    <div>
+                        <Select value={typeFilter} onValueChange={(val: any) => setTypeFilter(val)}>
+                            <SelectTrigger className="h-10 bg-slate-50 border-slate-200 rounded-xl text-xs font-semibold">
+                                <SelectValue placeholder={t('allRequestTypes')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allRequestTypes')}</SelectItem>
+                                <SelectItem value="transfer">{t('transferRequestsOnly')}</SelectItem>
+                                <SelectItem value="reassign">{t('reassignRequestsOnly')}</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Department */}
+                    <div>
+                        <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                            <SelectTrigger className="h-10 bg-slate-50 border-slate-200 rounded-xl text-xs font-semibold">
+                                <SelectValue placeholder={t('filterByDepartment')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allCategories')}</SelectItem>
+                                {departments?.map(dept => (
+                                    <SelectItem key={dept.id} value={dept.id}>{dept.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Date Filter */}
+                    <div>
+                        <Select value={dateFilter} onValueChange={(val: any) => setDateFilter(val)}>
+                            <SelectTrigger className="h-10 bg-slate-50 border-slate-200 rounded-xl text-xs font-semibold">
+                                <SelectValue placeholder={t('allTime')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">{t('allTime')}</SelectItem>
+                                <SelectItem value="today">{t('filterToday')}</SelectItem>
+                                <SelectItem value="7days">{t('filterLast7Days')}</SelectItem>
+                                <SelectItem value="30days">{t('filterLast30Days')}</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+
+                {/* Reset & Status Summary */}
+                {hasActiveFilters && (
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                        <span className="text-slate-500 font-medium">
+                            {activeRequests.length + processedRequests.length} {t('requestsSub')}
+                        </span>
+                        <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={handleResetFilters} 
+                            className="h-7 text-xs font-bold text-slate-500 hover:text-red-600 gap-1.5"
+                        >
+                            <RotateCcw className="h-3 w-3" />
+                            {t('resetFilters')}
+                        </Button>
+                    </div>
+                )}
             </div>
 
             <div className="space-y-4">
