@@ -34,7 +34,8 @@ import {
     Copy,
     Inbox,
     LayoutList,
-    ShieldCheck
+    ShieldCheck,
+    Share2
 } from 'lucide-react';
 import type { TicketMessage, Ticket, TicketStatus, UserProfile, Department, SLASettings } from '@/lib/types';
 import { DEFAULT_SLA_SETTINGS } from '@/lib/types';
@@ -46,6 +47,7 @@ import { Label } from '@/components/ui/label';
 import { useActionState, useEffect, useState, useMemo, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { addTicketReplyAction } from '@/actions/ticket_reply';
+import { shareTicketViaEmailAction } from '@/actions/ticket_share';
 import { transferTicketToCategoryAction } from '@/actions/ticket_transfer';
 import { requestTicketTransferAction } from '@/actions/ticket_request_transfer';
 import { requestTicketReassignmentAction } from '@/actions/ticket_request_reassign';
@@ -117,6 +119,8 @@ function Message({
     ticketCreatorId, 
     ticketId, 
     canDelete,
+    canShare,
+    onShare,
     parentName,
     isOpeningMessage,
     extraAttachments = []
@@ -126,6 +130,8 @@ function Message({
     ticketCreatorId: string; 
     ticketId: string; 
     canDelete: boolean;
+    canShare?: boolean;
+    onShare?: () => void;
     parentName?: string;
     isOpeningMessage?: boolean;
     extraAttachments?: any[];
@@ -187,17 +193,30 @@ function Message({
               </span>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <span className="text-[11px] text-[#94a3b8] font-medium whitespace-nowrap">
                 {msgDate ? formatDistanceToNow(msgDate, { addSuffix: true }) : '...'}
             </span>
+            {canShare && (
+                <Button 
+                    type="button"
+                    variant="ghost" 
+                    size="icon" 
+                    onClick={onShare}
+                    title={t('shareTicketTooltip')}
+                    className="h-6 w-6 text-slate-400 hover:text-[#1e3a8a] hover:bg-blue-50 transition-colors p-0 rounded-md"
+                >
+                    <Share2 className="h-3.5 w-3.5" />
+                    <span className="sr-only">{t('shareTicketViaEmail')}</span>
+                </Button>
+            )}
             {canDelete && (
                 <Button 
                     variant="ghost" 
                     size="icon" 
                     disabled={isDeleting}
                     onClick={handleDelete}
-                    className="h-7 w-7 text-slate-300 hover:text-red-500 opacity-0 group-hover/msg:opacity-100 transition-opacity"
+                    className="h-6 w-6 text-slate-300 hover:text-red-500 opacity-0 group-hover/msg:opacity-100 transition-opacity p-0"
                 >
                     {isDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                 </Button>
@@ -381,7 +400,7 @@ function TransferCategoryDialog({ isOpen, onClose, ticketId, currentCategory, us
     const lastProcessedRef = useRef<any>(null);
     const isEmployee = userRole === 'Employee';
     const actionToUse = isEmployee ? requestTicketTransferAction : transferTicketToCategoryAction;
-    const [state, dispatch, isPending] = useActionState(actionToUse as any, { success: false });
+    const [state, dispatch, isPending] = useActionState(actionToUse as any, { success: false, message: '' });
     const categoriesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'departments')) : null, [firestore]);
     const { data: categories } = useCollection<Department>(categoriesQuery);
     
@@ -556,6 +575,113 @@ function ManageTagsDialog({
     );
 }
 
+function ShareTicketDialog({
+    isOpen,
+    onClose,
+    ticketId
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    ticketId: string;
+}) {
+    const { user: actor } = useAuthUser();
+    const { toast } = useToast();
+    const { t } = useLanguage();
+    const [recipientEmail, setRecipientEmail] = useState('');
+    const [emailError, setEmailError] = useState('');
+    const lastProcessedRef = useRef<any>(null);
+    const [state, dispatch, isPending] = useActionState(shareTicketViaEmailAction, { success: false });
+
+    useEffect(() => {
+        if (state !== lastProcessedRef.current) {
+            if (state.success) {
+                toast({ title: '✅ ' + t('ticketSharedSuccessfully'), description: state.message || t('ticketSharedSuccessfully') });
+                setRecipientEmail('');
+                setEmailError('');
+                onClose();
+            } else if (state.message || state.errors?.recipientEmail || state.errors?.form) {
+                const errMsg = state.message || state.errors?.recipientEmail?.join(', ') || state.errors?.form?.join(', ') || 'Failed to share ticket.';
+                toast({ variant: "destructive", title: "Error", description: errMsg });
+            }
+            lastProcessedRef.current = state;
+        }
+    }, [state, toast, onClose, t]);
+
+    const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+        const email = recipientEmail.trim();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!email || !emailRegex.test(email)) {
+            e.preventDefault();
+            setEmailError(t('invalidGuestEmail') || 'Please enter a valid email address');
+            return;
+        }
+        setEmailError('');
+    };
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(open) => {
+            if (!isPending) {
+                if (!open) {
+                    setEmailError('');
+                }
+                onClose();
+            }
+        }}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle className="text-start flex items-center gap-2 text-slate-900 font-extrabold text-lg">
+                        <Share2 className="h-5 w-5 text-blue-600" />
+                        {t('shareTicketViaEmail')}
+                    </DialogTitle>
+                    <DialogDescription className="text-start text-xs text-slate-500">
+                        {t('shareTicketTooltip')}
+                    </DialogDescription>
+                </DialogHeader>
+                <form action={dispatch} onSubmit={handleSubmit} className="space-y-4 pt-2">
+                    <input type="hidden" name="ticketId" value={ticketId || ''} />
+                    {actor && <input type="hidden" name="actorId" value={actor.uid || ''} />}
+                    <div className="space-y-2 text-start">
+                        <Label htmlFor="recipientEmail" className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                            {t('recipientEmailLabel')}
+                        </Label>
+                        <Input
+                            id="recipientEmail"
+                            name="recipientEmail"
+                            type="email"
+                            required
+                            placeholder={t('recipientEmailPlaceholder')}
+                            value={recipientEmail}
+                            onChange={(e) => {
+                                setRecipientEmail(e.target.value);
+                                if (emailError) setEmailError('');
+                            }}
+                            className={cn(
+                                "h-11 bg-slate-50 border-slate-200 rounded-lg text-sm text-slate-800 focus:bg-white",
+                                emailError && "border-red-500 bg-red-50 focus:border-red-500"
+                            )}
+                            disabled={isPending}
+                        />
+                        {emailError && (
+                            <p className="text-[11px] font-bold text-red-600 flex items-center gap-1">
+                                <AlertCircle className="h-3 w-3" /> {emailError}
+                            </p>
+                        )}
+                    </div>
+                    <DialogFooter className="gap-2 sm:gap-0 pt-2">
+                        <Button type="button" variant="ghost" onClick={onClose} disabled={isPending} className="font-semibold text-slate-600">
+                            {t('cancel')}
+                        </Button>
+                        <Button type="submit" disabled={isPending} className="bg-[#1e3a8a] hover:bg-[#1e3a8a]/90 text-white font-bold gap-2">
+                            {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                            {isPending ? t('sharingTicket') : t('sendEmailBtn')}
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 export default function TicketDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -567,6 +693,7 @@ export default function TicketDetailPage() {
   const [isTransferOpen, setTransferOpen] = useState(false);
   const [isAssignOpen, setAssignOpen] = useState(false);
   const [isTagsOpen, setTagsOpen] = useState(false);
+  const [isShareOpen, setShareOpen] = useState(false);
   const [isDeleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeletingTicket, setIsDeletingTicket] = useState(false);
   const lastProcessedReassignRef = useRef<any>(null);
@@ -625,8 +752,8 @@ export default function TicketDetailPage() {
 
       // Record in system audit action log
       const actorInfo = {
-        userId: user?.uid || 'unknown',
-        name: userProfile?.name || user?.displayName || 'Staff'
+        userId: currentUser?.uid || 'unknown',
+        name: userProfile?.name || currentUser?.displayName || 'Staff'
       };
       updateTicketStatusAction(ticket.id, newStatus, actorInfo).catch(err => {
         console.warn('Action log status note:', err);
@@ -710,6 +837,7 @@ export default function TicketDetailPage() {
   }, [ticket, slaSettings, departments, t]);
 
   const isStaff = userProfile && ['Admin', 'Employee', 'Manager'].includes(userProfile.role);
+  const canShare = isStaff && (userProfile?.role === 'Admin' || userProfile?.role === 'Manager');
   const showContent = isStaff || isVerified;
 
   if (isTicketLoading || isProfileLoading) return <div className="space-y-6"><Skeleton className="h-48 w-full" /><div className="grid md:grid-cols-3 gap-6"><Skeleton className="md:col-span-2 h-[500px]" /><Skeleton className="h-[500px]" /></div></div>;
@@ -762,6 +890,7 @@ export default function TicketDetailPage() {
       <TransferCategoryDialog isOpen={isTransferOpen} onClose={() => setTransferOpen(false)} ticketId={ticket.id} currentCategory={ticket.departmentId} userRole={userProfile?.role} />
       <AssignPersonDialog isOpen={isAssignOpen} onClose={() => setAssignOpen(false)} ticketId={ticket.id} categoryId={ticket.departmentId} />
       <ManageTagsDialog isOpen={isTagsOpen} onClose={() => setTagsOpen(false)} ticketId={ticket.id} currentTags={ticket.tags || []} />
+      <ShareTicketDialog isOpen={isShareOpen} onClose={() => setShareOpen(false)} ticketId={ticket.id} />
 
       {/* Delete Ticket Confirmation Dialog for Admin */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -854,6 +983,8 @@ export default function TicketDetailPage() {
                     ticketCreatorId={ticket.createdBy.userId} 
                     ticketId={ticket.id}
                     canDelete={currentUser?.uid === m.author.userId || userProfile?.role === 'Admin'}
+                    canShare={canShare}
+                    onShare={() => setShareOpen(true)}
                     parentName={ticket.parentName}
                     isOpeningMessage={index === 0}
                     extraAttachments={index === 0 ? ticket.attachments : []}

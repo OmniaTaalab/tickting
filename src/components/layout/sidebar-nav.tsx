@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   PlusCircle,
   ArrowRightLeft,
+  Route,
 } from 'lucide-react';
 import { Logo } from '@/components/icons';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -258,6 +259,15 @@ export function SidebarNav() {
                       {stats.badgeCount}
                     </span>
                   )}
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={pathname === '/track-history'} tooltip={t('trackHistory')}>
+                <Link href="/track-history" className="gap-3 flex items-center">
+                  <Route className="h-4 w-4" />
+                  <span className="font-semibold text-slate-700">{t('trackHistory')}</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

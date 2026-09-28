@@ -90,7 +90,7 @@ export function SLAComplianceTrendChart({ tickets, dateRange }: ChartProps) {
 
   const chartData = useMemo(() => {
     if (!departments) return [];
-    const data = [];
+    const data: Array<{ day: string; fullDate: string; compliance: number }> = [];
     const now = new Date();
 
     let startRange: Date;

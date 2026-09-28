@@ -58,7 +58,7 @@ export type TicketStatus = 'Open' | 'In Progress' | 'Resolved' | 'Closed' | 'Que
 
 export type TicketPriority = 'Low' | 'Normal' | 'High' | 'Urgent';
 
-export type TicketChannel = 'Email' | 'Phone' | 'Walk-in' | 'Social Media' | 'Web' | 'Form';
+export type TicketChannel = 'Email' | 'Phone' | 'Walk-in' | 'Social Media' | 'Web' | 'Form' | 'WhatsApp';
 
 export type UserRole = 'Admin' | 'Employee' | 'Manager';
 
@@ -102,6 +102,54 @@ export type Attachment = {
   contentType: string;
 };
 
+export type Subject = {
+  id: string;
+  name: string;
+  departmentId?: string;
+};
+
+export type DepartmentID = string;
+
+export type TicketTransferRecord = {
+  id: string;
+  ticketId: string;
+  ticketNumber?: number | string;
+  ticketTitle?: string;
+  ticketSubject?: string;
+  ticketDescription?: string;
+  campusId?: string | null;
+  campusName?: string | null;
+  divisionId?: string | null;
+  divisionName?: string | null;
+  fromDepartmentId: string;
+  fromDepartmentName: string;
+  fromUser?: {
+    userId: string;
+    name: string;
+    avatarUrl?: string;
+    email?: string;
+  } | null;
+  toDepartmentId: string;
+  toDepartmentName: string;
+  toUser?: {
+    userId: string;
+    name: string;
+    avatarUrl?: string;
+    email?: string;
+  } | null;
+  involvedDepartmentIds?: string[];
+  requestedBy?: {
+    userId: string;
+    name: string;
+  } | null;
+  approvedBy?: {
+    userId: string;
+    name: string;
+  } | null;
+  transferredAt: Timestamp | string;
+  notes?: string;
+};
+
 export type Ticket = {
   id: string;
   ticketNumber: number;
@@ -126,6 +174,7 @@ export type Ticket = {
   studentBlbId?: string;
   reopenedCount?: number;
   lastReopenedAt?: Timestamp | string;
+  mailboxEmail?: string;
   createdBy: {
     userId: string;
     name: string;
@@ -147,6 +196,7 @@ export type Ticket = {
   firstRespondedAt?: Timestamp | string;
   messages: TicketMessage[];
   tags?: string[];
+  transferHistory?: TicketTransferRecord[];
 };
 
 export type SystemLog = {
@@ -219,6 +269,7 @@ export const DEFAULT_SLA_SETTINGS: SLASettings = {
     'Social Media': { Low: 24, Normal: 12, High: 6, Urgent: 3 },
     Web: { Low: 24, Normal: 12, High: 6, Urgent: 3 },
     Form: { Low: 24, Normal: 12, High: 6, Urgent: 3 },
+    WhatsApp: { Low: 24, Normal: 12, High: 6, Urgent: 3 },
 };
 
 export const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];

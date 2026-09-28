@@ -75,7 +75,7 @@ export async function deleteUserAction(
     const usersSnapshot = await adminDb.collection('users').get();
     const otherUsers = usersSnapshot.docs
       .filter(doc => doc.id !== userId)
-      .map(doc => ({ id: doc.id, ...(doc.data() as UserProfile) }));
+      .map(doc => ({ ...(doc.data() as UserProfile), id: doc.id }));
 
     let reassignedCount = 0;
     let queuedCount = 0;

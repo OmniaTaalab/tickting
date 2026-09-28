@@ -5,7 +5,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { logSystemEvent } from '@/lib/system-log';
 import { revalidatePath } from 'next/cache';
 import { getRoundRobinAssignee } from './ticket_assignment';
-import type { TicketEvent, UserProfile } from '@/lib/types';
+import type { TicketEvent, UserProfile, Ticket, TicketTransferRecord } from '@/lib/types';
 
 /**
  * Approves a transfer or reassignment request.
@@ -29,11 +29,12 @@ export async function approveRequestAction(
         const actorDoc = await db.collection('users').doc(actor.userId).get();
         const actorData = actorDoc.data() as UserProfile;
         
+        const ticketId = event.ticketId;
+        const ticketDoc = await db.collection('tickets').doc(ticketId).get();
+        if (!ticketDoc.exists) return { success: false, message: 'Ticket not found' };
+        const ticketData = ticketDoc.data() as Ticket;
+
         if (actorData.role !== 'Admin') {
-            const ticketId = event.ticketId;
-            const ticketDoc = await db.collection('tickets').doc(ticketId).get();
-            const ticketData = ticketDoc.data();
-            
             const ticketCampusId = ticketData?.campusId;
             const ticketDeptId = ticketData?.departmentId;
             const actorCampuses = actorData.campusIds || [];
@@ -41,7 +42,7 @@ export async function approveRequestAction(
 
             // Managers must own both the department and the campus of the ticket to approve
             const isAuthorized = 
-                (ticketCampusId && actorCampuses.includes(ticketCampusId)) && 
+                (!ticketCampusId || actorCampuses.length === 0 || actorCampuses.includes(ticketCampusId)) && 
                 (ticketDeptId && actorDeptId === ticketDeptId);
             
             if (!isAuthorized) {
@@ -58,7 +59,7 @@ export async function approveRequestAction(
             };
         }
 
-        const { ticketId, requestId, eventType, requestMetadata } = event;
+        const { requestId, eventType, requestMetadata } = event;
 
         if (eventType === 'TICKET_TRANSFER_REQUESTED' && requestMetadata?.toDepartmentId) {
             const newCategoryId = requestMetadata.toDepartmentId;
@@ -66,10 +67,57 @@ export async function approveRequestAction(
             const categoryName = categoryDoc.exists ? categoryDoc.data()!.name : 'Unknown Category';
             
             // Execute automatic assignment in the new category
-            const newAssignee = await getRoundRobinAssignee(newCategoryId);
+            const newAssignee = await getRoundRobinAssignee(newCategoryId, ticketData.campusId);
             const newStatus = newAssignee ? 'Open' : 'Queue';
 
-            await db.collection('tickets').doc(ticketId).update({
+            const transferId = requestId || `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            const transferRecord: TicketTransferRecord = {
+                id: transferId,
+                ticketId,
+                ticketNumber: ticketData.ticketNumber || ticketId.substring(0, 4),
+                ticketTitle: ticketData.title || ticketData.subject || 'No Subject',
+                ticketSubject: ticketData.subject || ticketData.title || 'No Subject',
+                ticketDescription: ticketData.description || '',
+                campusId: ticketData.campusId || null,
+                campusName: ticketData.campusName || null,
+                divisionId: ticketData.divisionId || null,
+                divisionName: ticketData.divisionName || null,
+                fromDepartmentId: requestMetadata?.fromDepartmentId || ticketData.departmentId,
+                fromDepartmentName: requestMetadata?.fromDepartmentName || ticketData.departmentName || 'Previous Department',
+                fromUser: (requestMetadata?.fromUserId && requestMetadata?.fromUserName) ? {
+                    userId: requestMetadata.fromUserId,
+                    name: requestMetadata.fromUserName,
+                    avatarUrl: '',
+                    email: '',
+                } : (ticketData.assignedTo ? {
+                    userId: ticketData.assignedTo.userId,
+                    name: ticketData.assignedTo.name,
+                    avatarUrl: ticketData.assignedTo.avatarUrl || '',
+                    email: ticketData.assignedTo.email || '',
+                } : null),
+                toDepartmentId: newCategoryId,
+                toDepartmentName: categoryName,
+                involvedDepartmentIds: [requestMetadata?.fromDepartmentId || ticketData.departmentId, newCategoryId].filter(Boolean),
+                toUser: newAssignee ? {
+                    userId: newAssignee.id,
+                    name: newAssignee.name,
+                    avatarUrl: newAssignee.avatarUrl || '',
+                    email: newAssignee.email || '',
+                } : null,
+                requestedBy: {
+                    userId: event.recipient || actor.userId,
+                    name: requestMetadata?.requesterName || actor.name,
+                },
+                approvedBy: {
+                    userId: actor.userId,
+                    name: actor.name,
+                },
+                transferredAt: new Date().toISOString(),
+            };
+
+            const batch = db.batch();
+            
+            batch.update(db.collection('tickets').doc(ticketId), {
                 departmentId: newCategoryId,
                 departmentName: categoryName,
                 assignedTo: newAssignee ? {
@@ -81,14 +129,43 @@ export async function approveRequestAction(
                 assignedAt: newAssignee ? FieldValue.serverTimestamp() : null,
                 status: newStatus,
                 updatedAt: FieldValue.serverTimestamp(),
+                transferHistory: FieldValue.arrayUnion(transferRecord),
             });
+
+            batch.set(db.collection('ticket-transfers').doc(transferId), {
+                ...transferRecord,
+                transferredAtTimestamp: FieldValue.serverTimestamp(),
+            });
+
+            await batch.commit();
 
             await logSystemEvent({
                 eventType: 'TICKET_TRANSFER_APPROVED',
                 actor,
-                message: `${actor.name} approved transfer of ticket #${ticketId.substring(0,4)} to ${categoryName}.`,
-                details: { ticketId, requestId, approvedBy: actor.userId }
+                message: `${actor.name} approved transfer of ticket #${ticketData.ticketNumber || ticketId.substring(0,4)} to ${categoryName}.`,
+                details: { 
+                    ticketId, 
+                    transferId, 
+                    requestId, 
+                    approvedBy: actor.userId, 
+                    fromDepartmentId: transferRecord.fromDepartmentId,
+                    toDepartmentId: newCategoryId,
+                    newAssigneeName: newAssignee?.name || 'In Queue'
+                }
             });
+
+            // Notify new assignee if present
+            if (newAssignee) {
+                await db.collection('ticket-events').add({
+                    ticketId,
+                    eventType: 'TICKET_STATUS_CHANGED',
+                    title: 'New Transferred Ticket',
+                    message: `Ticket #${ticketData.ticketNumber || ticketId.substring(0, 4)} was transferred to your category and assigned to you.`,
+                    recipient: newAssignee.id,
+                    read: false,
+                    timestamp: FieldValue.serverTimestamp(),
+                });
+            }
         } 
         else if (eventType === 'TICKET_REASSIGN_REQUESTED') {
             let assigneeData = null;
@@ -118,7 +195,7 @@ export async function approveRequestAction(
             await logSystemEvent({
                 eventType: 'TICKET_REASSIGN_APPROVED',
                 actor,
-                message: `${actor.name} approved reassignment for ticket #${ticketId.substring(0,4)} to ${assigneeData?.name || 'Unassigned'}.`,
+                message: `${actor.name} approved reassignment for ticket #${ticketData.ticketNumber || ticketId.substring(0,4)} to ${assigneeData?.name || 'Unassigned'}.`,
                 details: { ticketId, requestId, approvedBy: actor.userId, newAssigneeId }
             });
         }
@@ -136,6 +213,8 @@ export async function approveRequestAction(
         }
 
         revalidatePath('/requests');
+        revalidatePath('/track-history');
+        revalidatePath('/tickets');
         revalidatePath(`/tickets/${ticketId}`);
         return { success: true, message: 'Action executed and ticket updated successfully' };
     } catch (e: any) {
@@ -172,7 +251,7 @@ export async function rejectRequestAction(eventId: string, actor: { userId: stri
             const actorDeptId = actorData.departmentId;
 
             const isAuthorized = 
-                (ticketCampusId && actorCampuses.includes(ticketCampusId)) && 
+                (!ticketCampusId || actorCampuses.length === 0 || actorCampuses.includes(ticketCampusId)) && 
                 (ticketDeptId && actorDeptId === ticketDeptId);
             
             if (!isAuthorized) {

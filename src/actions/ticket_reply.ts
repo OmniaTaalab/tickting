@@ -191,6 +191,18 @@ export async function addTicketReplyAction(
                 replierName = profile.name;
                 replierAvatar = profile.avatarUrl;
                 replierEmail = profile.email;
+
+                // Read-only check for transferred tickets:
+                // If the user is not an Admin, they can only reply if their department owns the ticket
+                if (profile.role !== 'Admin') {
+                    if (ticketData.departmentId && profile.departmentId !== ticketData.departmentId) {
+                        return {
+                            errors: { form: [`Permission denied: This ticket has been transferred to ${ticketData.departmentName || 'another department'}. Transferred tickets are read-only.`] },
+                            message: `Permission denied: This ticket has been transferred to ${ticketData.departmentName || 'another department'}.`,
+                            success: false,
+                        };
+                    }
+                }
             }
         }
 

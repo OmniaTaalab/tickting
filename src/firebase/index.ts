@@ -12,11 +12,10 @@ export function initializeFirebase() {
     // a production App Hosting environment.
     const firebaseApp = initializeApp(firebaseConfig);
     
-    // Explicitly initialize Firestore with long-polling to prevent connection timeouts
+    // Explicitly initialize Firestore with auto-detect long-polling to prevent connection timeouts
     // in proxied or restricted network environments like Firebase Studio.
     const firestore = initializeFirestore(firebaseApp, {
       experimentalAutoDetectLongPolling: true,
-      forceLongPolling: true, // Forcing long polling for better stability in workstation environments
     });
 
     return getSdks(firebaseApp, firestore);

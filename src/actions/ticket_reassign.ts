@@ -55,6 +55,22 @@ export async function reassignTicketAction(
     }
 
     const ticketData = ticketDoc.data() as Ticket;
+
+    // Check authority: Non-admins cannot reassign tickets of other departments
+    const actorDoc = await db.collection('users').doc(actorId).get();
+    if (actorDoc.exists) {
+      const actorProfile = actorDoc.data() as UserProfile;
+      if (actorProfile.role !== 'Admin') {
+        if (ticketData.departmentId && actorProfile.departmentId !== ticketData.departmentId) {
+          return {
+            errors: { form: [`Permission denied: This ticket belongs to ${ticketData.departmentName || 'another department'}. Transferred tickets are read-only.`] },
+            message: 'Permission denied: This ticket belongs to another department.',
+            success: false,
+          };
+        }
+      }
+    }
+
     let newAssigneePayload: any = null;
     let newAssigneeName = 'Unassigned';
     let message = `Ticket successfully unassigned and moved to Queue status.`;
@@ -103,6 +119,40 @@ export async function reassignTicketAction(
     }
 
     updates.assignedTo = newAssigneePayload;
+
+    // Synchronize latest transfer record with new assignee
+    try {
+      const transfersSnapshot = await db.collection('ticket-transfers')
+        .where('ticketId', '==', ticketId)
+        .orderBy('transferredAt', 'desc')
+        .limit(1)
+        .get();
+
+      if (!transfersSnapshot.empty) {
+        const latestTransferDoc = transfersSnapshot.docs[0];
+        const transferData = latestTransferDoc.data();
+        if (transferData.toDepartmentId === ticketData.departmentId) {
+          await latestTransferDoc.ref.update({
+            toUser: newAssigneePayload,
+          });
+        }
+      }
+
+      // Also update in-ticket transferHistory array if present
+      if (Array.isArray(ticketData.transferHistory) && ticketData.transferHistory.length > 0) {
+        const updatedHistory = [...ticketData.transferHistory];
+        const lastIndex = updatedHistory.length - 1;
+        if (updatedHistory[lastIndex].toDepartmentId === ticketData.departmentId) {
+          updatedHistory[lastIndex] = {
+            ...updatedHistory[lastIndex],
+            toUser: newAssigneePayload,
+          };
+          updates.transferHistory = updatedHistory;
+        }
+      }
+    } catch (err) {
+      console.error('Error synchronizing transfer record assignee:', err);
+    }
 
     await ticketRef.update(updates);
 

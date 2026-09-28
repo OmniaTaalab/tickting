@@ -145,6 +145,7 @@ const defaultVisibleColumns: Record<ColumnId, boolean> = {
   details: true,
   date: true,
   assignedTo: true,
+  assignedAt: true,
   priority: true,
   status: true,
   channel: true,

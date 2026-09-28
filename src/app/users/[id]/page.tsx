@@ -129,9 +129,9 @@ function UserDetailsPage() {
         let monthBusyMinutes = 0;
         let firstActivityToday: Date | null = null;
 
-        sessions?.forEach(session => {
+        for (const session of sessions || []) {
             const start = toDate(session.startedAt);
-            if (!start) return;
+            if (!start) continue;
             const duration = session.durationInMinutes || 0;
 
             if (isWithinInterval(start, { start: today, end: now })) {
@@ -146,7 +146,7 @@ function UserDetailsPage() {
             if (isWithinInterval(start, { start: monthStart, end: now })) {
                 monthBusyMinutes += duration;
             }
-        });
+        }
 
         if (userProfile.status === 'Busy' && userProfile.currentSessionStartedAt) {
             const start = toDate(userProfile.currentSessionStartedAt);

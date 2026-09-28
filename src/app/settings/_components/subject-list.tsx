@@ -101,7 +101,7 @@ export function SubjectList() {
             {subjects?.map((subj) => (
               <TableRow key={subj.id}>
                 <TableCell className="font-medium">{subj.name}</TableCell>
-                <TableCell>{departmentsMap.get(subj.departmentId) || 'N/A'}</TableCell>
+                <TableCell>{departmentsMap.get(subj.departmentId || '') || 'N/A'}</TableCell>
                 <TableCell className="text-right space-x-2">
                   <Button variant="outline" size="icon" onClick={() => handleEdit(subj)}>
                     <Pencil className="h-4 w-4" />

@@ -60,6 +60,20 @@ export async function requestTicketTransferAction(
     const ticketData = ticketDoc.data()!;
     const ticketCampusId = ticketData.campusId;
 
+    // Authorization check: Non-admins must belong to the CURRENT department of the ticket
+    const actorDoc = await db.collection('users').doc(actorId).get();
+    if (actorDoc.exists) {
+      const actorData = actorDoc.data() as UserProfile;
+      if (actorData.role !== 'Admin') {
+        if (ticketData.departmentId && actorData.departmentId !== ticketData.departmentId) {
+          return {
+            success: false,
+            message: `Permission denied: This ticket belongs to ${ticketData.departmentName || 'another department'}. Transferred tickets are read-only for previous departments.`,
+          };
+        }
+      }
+    }
+
     const targetCategoryDoc = await db.collection('departments').doc(newCategoryId).get();
     const targetCategoryName = targetCategoryDoc.exists ? targetCategoryDoc.data()!.name : 'Unknown Category';
 

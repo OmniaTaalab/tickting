@@ -2,7 +2,7 @@
 
 import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
-import type { TicketStatus } from '@/lib/types';
+import type { TicketStatus, UserProfile } from '@/lib/types';
 import { logSystemEvent } from '@/lib/system-log';
 import { revalidatePath } from 'next/cache';
 
@@ -21,6 +21,22 @@ export async function updateTicketStatusAction(
 
     const ticket = docSnap.data()!;
     const previousStatus = ticket.status;
+
+    // Check authority: Non-admins cannot update status of tickets outside their current department
+    if (actor.userId && !actor.userId.startsWith('anon_')) {
+      const actorDoc = await db.collection('users').doc(actor.userId).get();
+      if (actorDoc.exists) {
+        const actorProfile = actorDoc.data() as UserProfile;
+        if (actorProfile.role !== 'Admin') {
+          if (ticket.departmentId && actorProfile.departmentId !== ticket.departmentId) {
+            return {
+              success: false,
+              message: `Permission denied: This ticket belongs to ${ticket.departmentName || 'another department'}. Transferred tickets are read-only.`,
+            };
+          }
+        }
+      }
+    }
 
     const updates: Record<string, any> = {
       status: newStatus,
