@@ -4,6 +4,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { getRoundRobinAssignee } from '@/actions/ticket_assignment';
 import { FieldValue } from 'firebase-admin/firestore';
 import { isWithinWorkingHours } from '@/lib/working-hours-utils';
+import { generateUniqueTicketNumber } from '@/lib/ticket-number';
 
 const MAILBOX_MAPPING: Record<string, string> = {
     "1st Settlement": "accounting.1stsettlement@nis-egypt.com",
@@ -66,7 +67,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        const finalTicketNumber = ticketNumber || Math.floor(1000 + Math.random() * 9000);
+        const finalTicketNumber = ticketNumber || await generateUniqueTicketNumber(db);
         const finalSubject = subject || 'No Subject';
 
         // Normalize channel name

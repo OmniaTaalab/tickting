@@ -8,6 +8,7 @@ import { logSystemEvent } from '@/lib/system-log';
 import { redirect } from 'next/navigation';
 import { getRoundRobinAssignee } from './ticket_assignment';
 import { revalidatePath } from 'next/cache';
+import { generateUniqueTicketNumber } from '@/lib/ticket-number';
 
 const AddReplySchema = z.object({
   ticketId: z.string().min(1, "Ticket ID is required"),
@@ -111,7 +112,7 @@ export async function addTicketReplyAction(
     if (isFinished && isCreator) {
         const assignedUser = await getRoundRobinAssignee(ticketData.departmentId, ticketData.campusId);
         const status: TicketStatus = assignedUser ? 'Open' : 'Queue';
-        const ticketNumber = generateRandom4Digit();
+        const ticketNumber = await generateUniqueTicketNumber(db);
         const now = new Date();
 
         const newTicketPayload = {
@@ -140,7 +141,7 @@ export async function addTicketReplyAction(
             updatedAt: FieldValue.serverTimestamp(),
             messages: [
                 {
-                    id: String(generateRandom4Digit()),
+                    id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
                     author: {
                         userId: ticketData.createdBy.userId,
                         name: ticketData.createdBy.name,
@@ -208,7 +209,7 @@ export async function addTicketReplyAction(
 
         const now = new Date();
         const newReply = {
-          id: String(generateRandom4Digit()),
+          id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
           author: { userId, name: replierName, avatarUrl: replierAvatar },
           text: replyText,
           createdAt: now.toISOString(),

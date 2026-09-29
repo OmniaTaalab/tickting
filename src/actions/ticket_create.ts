@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation';
 import { getRoundRobinAssignee } from './ticket_assignment';
 import { isWithinWorkingHours } from '@/lib/working-hours-utils';
 import { logSystemEvent } from '@/lib/system-log';
+import { generateUniqueTicketNumber } from '@/lib/ticket-number';
 
 const FormSchema = z.object({
   title: z.string().min(3, 'Title is required.').max(100, 'Title cannot exceed 100 characters.'),
@@ -176,7 +177,7 @@ export async function createTicketAction(
         if (assignedUser) status = 'Open';
     }
 
-    const ticketNumber = generateRandom4Digit();
+    const ticketNumber = await generateUniqueTicketNumber(db);
     const now = new Date();
     const mailboxEmail = campusNameValue ? MAILBOX_MAPPING[campusNameValue] : null;
 
@@ -221,7 +222,7 @@ export async function createTicketAction(
       updatedAt: FieldValue.serverTimestamp(),
       messages: [
         {
-          id: String(generateRandom4Digit()),
+          id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
           author: { 
               userId: staffId || `anon_${Date.now()}`, 
               name: staffName || parentName, 

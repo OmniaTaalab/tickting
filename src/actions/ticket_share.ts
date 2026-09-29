@@ -412,7 +412,7 @@ This email was shared via NIS Connect Support Portal by ${actorProfile.name}.
     const actorAvatar = actorProfile.avatarUrl || `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(actorProfile.name)}&backgroundColor=1e40af`;
 
     const shareInternalNote = {
-      id: String(generateRandom4Digit()),
+      id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
       author: {
         userId: actorProfile.id || actorId,
         name: actorProfile.name,

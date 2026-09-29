@@ -27,6 +27,7 @@ import { useLanguage } from '@/hooks/use-language';
 import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 import { useToast } from '@/hooks/use-toast';
 import { assignQueuedTicketsAction } from '@/actions/ticket_assignment';
+import { fixDuplicateTicketNumbersAction } from '@/actions/ticket_deduplicate';
 
 
 const toDate = (ts: any): Date | null => {
@@ -316,6 +317,32 @@ function TicketsContent() {
   }, [firestore, user, userProfile, isProfileLoading]);
 
   const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<Ticket>(ticketsQuery);
+
+  // Auto-heal duplicate ticket numbers if any exist
+  const hasTriggeredDeduplicate = useRef(false);
+  useEffect(() => {
+    if (!rawTickets || rawTickets.length === 0 || hasTriggeredDeduplicate.current) return;
+    const seen = new Set<number>();
+    let hasDuplicate = false;
+    for (const t of rawTickets) {
+      if (t.ticketNumber && seen.has(t.ticketNumber)) {
+        hasDuplicate = true;
+        break;
+      }
+      if (t.ticketNumber) seen.add(t.ticketNumber);
+    }
+
+    if (hasDuplicate) {
+      hasTriggeredDeduplicate.current = true;
+      fixDuplicateTicketNumbersAction().then(res => {
+        if (res.success && res.fixedCount > 0) {
+          console.log(`[Deduplicate] Automatically repaired ${res.fixedCount} duplicate tickets.`);
+        }
+      }).catch(err => {
+        console.error('[Deduplicate] Auto-repair failed:', err);
+      });
+    }
+  }, [rawTickets]);
 
   const roleFilteredTickets = useMemo(() => {
     if (!rawTickets || !userProfile || !user) return [];
