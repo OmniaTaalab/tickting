@@ -22,7 +22,7 @@ export const Logo = ({
       {showText && (
         <div className="flex flex-col leading-tight text-start">
           <span className="text-[16px] font-bold text-[#0F172A]">
-            NIS CRM
+           CRM
           </span>
           <span className="mt-0.5 text-[13px] font-medium text-[#64748B]">
             Parent Care CRM

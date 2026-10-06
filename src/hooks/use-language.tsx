@@ -321,7 +321,7 @@ const translations: Record<Language, Record<string, string>> = {
 
     // General
     search: "Search...",
-    loading: "Loading NIS CRM...",
+    loading: "Loading CRM...",
     available: "Available",
     busy: "Busy",
     status: "Status",

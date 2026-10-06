@@ -7,7 +7,7 @@ import { AuthInitializer } from '@/components/auth-initializer';
 import { LanguageProvider } from '@/hooks/use-language';
 
 export const metadata: Metadata = {
-  title: 'NIS CRM Support',
+  title: 'CRM Support',
   description: 'Parent Care CRM & Support System',
   manifest: '/site.webmanifest',
 };

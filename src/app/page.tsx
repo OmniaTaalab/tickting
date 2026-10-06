@@ -13,7 +13,7 @@ export default function RootPage() {
       <div className="flex flex-col items-center gap-4 animate-pulse">
           <Logo className="mb-4" />
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Loading NIS CRM...</p>
+          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Loading CRM...</p>
       </div>
     </div>
   );
