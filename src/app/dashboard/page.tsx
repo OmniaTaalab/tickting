@@ -14,6 +14,8 @@ import { TicketsByCampusChart } from '@/components/dashboard/tickets-by-campus-c
 import { SLAComplianceTrendChart } from '@/components/dashboard/sla-compliance-trend-chart';
 import { ChannelMixChart } from '@/components/dashboard/channel-mix-chart';
 import { DivisionHealthCards } from '@/components/dashboard/division-health-cards';
+import { HolidayBanner } from '@/components/dashboard/holiday-banner';
+import { UpcomingHolidaysCard } from '@/components/dashboard/upcoming-holidays-card';
 import { useCollection, useDoc, useFirebase, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, doc, Timestamp } from 'firebase/firestore';
 import type { Ticket as TicketType, UserProfile, SLASettings, Department, TicketChannel } from '@/lib/types';
@@ -223,8 +225,13 @@ function DashboardPage() {
     );
   }
 
+  const isAdmin = userProfile?.role === 'Admin';
+
   return (
     <div className="space-y-8">
+        {/* Official Holiday Today Alert Banner */}
+        <HolidayBanner isAdmin={isAdmin} />
+
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
             <div className="space-y-1 text-start">
                 <h2 className="text-3xl font-bold tracking-tight">{t('dashboard')}</h2>
@@ -274,6 +281,7 @@ function DashboardPage() {
             )}
           </div>
           <div className="lg:col-span-1 space-y-4">
+             <UpcomingHolidaysCard isAdmin={isAdmin} />
              <ChannelMixChart tickets={performanceFilteredTickets || []} />
              {!isEmployee && <TicketsByAssigneeChart tickets={performanceFilteredTickets || []} />}
           </div>

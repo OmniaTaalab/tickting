@@ -283,3 +283,20 @@ export const DEFAULT_WORKING_HOURS: WorkingHours = {
   Friday: { isOpen: false, start: "08:00", end: "16:00" },
   Saturday: { isOpen: false, start: "08:00", end: "16:00" },
 };
+
+export interface OfficialHoliday {
+  id?: string;
+  name: string;
+  date: string; // "YYYY-MM-DD"
+  isActive: boolean;
+  emailSubject: string;
+  emailBody: string;
+  createdAt?: Timestamp | string | any;
+  updatedAt?: Timestamp | string | any;
+}
+
+export const DEFAULT_HOLIDAY_EMAIL = {
+  subject: "Office Closed - Official Holiday",
+  body: "Thank you for contacting us.\n\nPlease note that today is an official holiday and our support team is currently unavailable.\n\nYour ticket has been received and will be reviewed on the next working day.\n\nRegards,\nSupport Team"
+};
+

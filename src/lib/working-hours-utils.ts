@@ -1,13 +1,92 @@
-
 import { format, parse, isSameDay, addDays, startOfDay, isBefore, isAfter, differenceInMinutes } from 'date-fns';
-import type { WorkingHours } from './types';
+import type { WorkingHours, OfficialHoliday } from './types';
 import { DEFAULT_WORKING_HOURS, WEEKDAYS } from './types';
+
+/**
+ * Returns date formatted as YYYY-MM-DD in Africa/Cairo timezone.
+ */
+export function getCairoDateString(date: Date = new Date()): string {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Africa/Cairo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    });
+    const parts = formatter.formatToParts(date);
+    const year = parts.find(p => p.type === 'year')?.value || '1970';
+    const month = parts.find(p => p.type === 'month')?.value || '01';
+    const day = parts.find(p => p.type === 'day')?.value || '01';
+    return `${year}-${month}-${day}`;
+}
+
+// Module-level cache for active official holidays (YYYY-MM-DD)
+let globalActiveHolidays = new Set<string>();
+
+/**
+ * Updates the in-memory cache of active holiday date strings (YYYY-MM-DD).
+ */
+export function setActiveHolidaysCache(
+    holidays: Array<OfficialHoliday | { date: string; isActive?: boolean } | string> | Set<string>
+): void {
+    const nextSet = new Set<string>();
+    if (holidays instanceof Set) {
+        holidays.forEach(d => nextSet.add(d));
+    } else if (Array.isArray(holidays)) {
+        holidays.forEach(h => {
+            if (typeof h === 'string') {
+                nextSet.add(h);
+            } else if (h && (h.isActive === undefined || h.isActive === true)) {
+                nextSet.add(h.date);
+            }
+        });
+    }
+    globalActiveHolidays = nextSet;
+}
+
+/**
+ * Returns the current active holiday date strings set.
+ */
+export function getActiveHolidaysCache(): Set<string> {
+    return globalActiveHolidays;
+}
+
+/**
+ * Checks if a given date is an active official holiday in Africa/Cairo timezone.
+ */
+export function isHolidayDate(
+    date: Date,
+    holidays?: Array<OfficialHoliday | { date: string; isActive?: boolean } | string> | Set<string>
+): boolean {
+    const dateStr = getCairoDateString(date);
+    if (holidays !== undefined) {
+        if (holidays instanceof Set) {
+            return holidays.has(dateStr);
+        }
+        if (Array.isArray(holidays)) {
+            return holidays.some(h => {
+                if (typeof h === 'string') return h === dateStr;
+                return h.date === dateStr && (h.isActive === undefined || h.isActive === true);
+            });
+        }
+    }
+    return globalActiveHolidays.has(dateStr);
+}
 
 /**
  * Checks if a given date (defaulting to now) is within the provided working hours config.
  * Forces comparison in Africa/Cairo timezone.
+ * Returns false if the date is an active Official Holiday.
  */
-export function isWithinWorkingHours(workingHours: WorkingHours | undefined, date: Date = new Date()): boolean {
+export function isWithinWorkingHours(
+    workingHours: WorkingHours | undefined,
+    date: Date = new Date(),
+    holidays?: Array<OfficialHoliday | { date: string; isActive?: boolean } | string> | Set<string>
+): boolean {
+    // 1. Official Holiday Check: If date falls on an active holiday, whole day is OFF!
+    if (isHolidayDate(date, holidays)) {
+        return false;
+    }
+
     const hoursToUse = workingHours || DEFAULT_WORKING_HOURS;
 
     // Force Cairo Timezone for evaluation
@@ -37,8 +116,14 @@ export function isWithinWorkingHours(workingHours: WorkingHours | undefined, dat
 
 /**
  * Calculates total WORKING hours elapsed between two dates based on department hours.
+ * Skips weekends AND active Official Holidays.
  */
-export function calculateWorkingHoursElapsed(start: Date, end: Date, workingHours: WorkingHours | undefined): number {
+export function calculateWorkingHoursElapsed(
+    start: Date,
+    end: Date,
+    workingHours: WorkingHours | undefined,
+    holidays?: Array<OfficialHoliday | { date: string; isActive?: boolean } | string> | Set<string>
+): number {
     const hoursToUse = workingHours || DEFAULT_WORKING_HOURS;
 
     if (isAfter(start, end)) return 0;
@@ -48,6 +133,12 @@ export function calculateWorkingHoursElapsed(start: Date, end: Date, workingHour
     const lastDay = startOfDay(end);
 
     while (currentDay <= lastDay) {
+        // Exclude active Official Holidays from SLA calculation
+        if (isHolidayDate(currentDay, holidays)) {
+            currentDay = addDays(currentDay, 1);
+            continue;
+        }
+
         const dayName = format(currentDay, 'EEEE');
         const config = hoursToUse[dayName];
 

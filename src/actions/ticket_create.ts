@@ -149,18 +149,20 @@ export async function createTicketAction(
   let newTicketId = '';
 
   try {
-    const [deptDoc, schoolDoc, campusDoc, divisionDoc, gradeDoc] = await Promise.all([
+    const [deptDoc, schoolDoc, campusDoc, divisionDoc, gradeDoc, holidaysSnap] = await Promise.all([
         db.collection('departments').doc(departmentId).get(),
         db.collection('schools').doc(schoolId).get(),
         db.collection('campuses').doc(campusId).get(),
         db.collection('divisions').doc(divisionId).get(),
         db.collection('grades').doc(gradeId).get(),
+        db.collection('official_holidays').where('isActive', '==', true).get(),
     ]);
 
     if (!deptDoc.exists) {
       return { success: false, message: 'Selected category does not exist.' };
     }
 
+    const activeHolidays = holidaysSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
     const departmentData = deptDoc.data() as Department;
     const departmentName = departmentData.name || 'General';
     const schoolNameValue = schoolDoc.exists ? schoolDoc.data()?.name : 'N/A';
@@ -168,7 +170,8 @@ export async function createTicketAction(
     const divisionNameValue = divisionDoc.exists ? divisionDoc.data()?.name : 'N/A';
     const gradeNameValue = gradeDoc.exists ? gradeDoc.data()?.name : 'N/A';
 
-    const isNowWorking = isWithinWorkingHours(departmentData.workingHours);
+    const now = new Date();
+    const isNowWorking = isWithinWorkingHours(departmentData.workingHours, now, activeHolidays);
     let assignedUser = null;
     let status: TicketStatus = 'Queue'; 
 
@@ -178,7 +181,6 @@ export async function createTicketAction(
     }
 
     const ticketNumber = await generateUniqueTicketNumber(db);
-    const now = new Date();
     const mailboxEmail = campusNameValue ? MAILBOX_MAPPING[campusNameValue] : null;
 
     const finalPriority: TicketPriority = channel === 'Walk-in' ? 'High' : 'Normal';

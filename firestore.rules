@@ -55,6 +55,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /official_holidays/{holidayId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /system-logs/{logId} {
       allow get, list: if isAdmin();
       allow create, update, delete: if false;

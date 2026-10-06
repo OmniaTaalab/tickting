@@ -50,6 +50,9 @@ export async function getRoundRobinAssignee(departmentId: string, campusId?: str
     let assignee: AssigneeProfile | null = null;
 
     try {
+        const holidaysSnap = await db.collection('official_holidays').where('isActive', '==', true).get();
+        const activeHolidays = holidaysSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+
         await db.runTransaction(async (transaction) => {
             const deptDoc = await transaction.get(deptRef);
             if (!deptDoc.exists) {
@@ -57,11 +60,11 @@ export async function getRoundRobinAssignee(departmentId: string, campusId?: str
             }
 const department = deptDoc.data() as any;
 
-const isNowWorking = isWithinWorkingHours(department.workingHours);
+const isNowWorking = isWithinWorkingHours(department.workingHours, new Date(), activeHolidays);
 
 if (!isNowWorking) {
     console.log(
-        `Outside working hours for department ${departmentId}. Assignment skipped.`
+        `Outside working hours (or official holiday) for department ${departmentId}. Assignment skipped.`
     );
     return;
 }
@@ -211,6 +214,9 @@ export async function autoAssignQueuedTickets(options?: {
     const assignments: QueuedTicketAssignment[] = [];
     const skippedTickets: Array<{ ticketId: string; ticketNumber?: number | string; subject?: string; reason: string }> = [];
 
+    const holidaysSnap = await db.collection('official_holidays').where('isActive', '==', true).get();
+    const activeHolidays = holidaysSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+
     // Cache departments and available agents
   const deptCache = new Map<string, {
   deptRef: FirebaseFirestore.DocumentReference;
@@ -300,8 +306,8 @@ if (!deptInfo) {
   continue;
 }
 
-// ✅ Don't assign queued tickets outside department working hours
-const isNowWorking = isWithinWorkingHours(deptInfo.workingHours);
+// ✅ Don't assign queued tickets outside department working hours or on official holidays
+const isNowWorking = isWithinWorkingHours(deptInfo.workingHours, new Date(), activeHolidays);
 
 if (!isNowWorking) {
   skippedTickets.push({

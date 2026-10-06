@@ -50,11 +50,15 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'departmentId is required for auto-assignment' }, { status: 400 });
         }
 
-        // 1. Fetch Department to check working hours
-        const deptDoc = await db.collection('departments').doc(departmentId).get();
+        // 1. Fetch Department & Active Holidays to check working hours
+        const [deptDoc, holidaysSnap] = await Promise.all([
+            db.collection('departments').doc(departmentId).get(),
+            db.collection('official_holidays').where('isActive', '==', true).get(),
+        ]);
         const deptData = deptDoc.exists ? deptDoc.data() : null;
+        const activeHolidays = holidaysSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
         
-        const isNowWorking = isWithinWorkingHours(deptData?.workingHours);
+        const isNowWorking = isWithinWorkingHours(deptData?.workingHours, new Date(), activeHolidays);
         
         // 2. Automated Assignment Logic
         let assignedUser = null;
