@@ -37,21 +37,21 @@ type ResolvedRouting = {
     allowedGrades: string[];
 };
 
-function academicMailbox(
-    email: string,
-    campusId: string,
-    campusName: string,
-    routes: MailboxRoute[]
-): MailboxConfig {
-    return {
-        email,
-        department: "Academic",
-        campusId,
-        campusName,
-        routes,
-        enabled: true,
-    };
-}
+// function academicMailbox(
+//     email: string,
+//     campusId: string,
+//     campusName: string,
+//     routes: MailboxRoute[]
+// ): MailboxConfig {
+//     return {
+//         email,
+//         department: "Academic",
+//         campusId,
+//         campusName,
+//         routes,
+//         enabled: true,
+//     };
+// }
 
 const MAILBOXES: MailboxConfig[] = [
 
@@ -168,7 +168,11 @@ const MAILBOXES: MailboxConfig[] = [
         department: "General support",
         enabled: true,
     },
-
+{
+    email:"Admission@nis-egypt.com",
+    department: "General support",
+    enabled:true,
+}
     // Academic queues
 //     academicMailbox(
 //         "ks1-2-nci-br@nis-egypt.com",
