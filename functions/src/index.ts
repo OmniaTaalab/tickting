@@ -1897,6 +1897,38 @@ export const syncEmails = onSchedule(
                                         .replace(/"/g, "")
                                         .trim() || senderEmail;
 
+const normalizedSubject = subject.toLowerCase().trim();
+const normalizedSender = senderEmail.toLowerCase().trim();
+
+const isDeliveryNotification =
+    normalizedSubject.includes("delivery status notification") ||
+    normalizedSubject.includes("delivery status notification (failure)") ||
+    normalizedSubject.includes("undelivered mail returned to sender") ||
+    normalizedSubject.includes("mail delivery failed") ||
+    normalizedSubject.includes("delivery failure") ||
+    normalizedSender.startsWith("mailer-daemon@") ||
+    normalizedSender.startsWith("postmaster@");
+
+if (isDeliveryNotification) {
+    console.log(
+        `SKIPPING DELIVERY NOTIFICATION: ${subject} from ${senderEmail}`
+    );
+
+    await processedRef.set(
+        {
+            status: "completed",
+            skipped: true,
+            reason: "delivery-notification",
+            mailbox: mailbox.email,
+            processedAt:
+                admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+    );
+
+    continue;
+}
+
                                 if (
                                     senderEmail.toLowerCase() ===
                                     mailbox.email.toLowerCase()
