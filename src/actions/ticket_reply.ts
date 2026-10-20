@@ -110,7 +110,13 @@ export async function addTicketReplyAction(
     const isFinished = ticketData.status === 'Resolved' || ticketData.status === 'Closed';
 
     if (isFinished && isCreator) {
-        const assignedUser = await getRoundRobinAssignee(ticketData.departmentId, ticketData.campusId);
+        const assignedUser = await getRoundRobinAssignee({
+            departmentId: ticketData.departmentId,
+            campusId: ticketData.campusId,
+            schoolId: ticketData.schoolId,
+            divisionId: ticketData.divisionId,
+            gradeId: ticketData.gradeId,
+        });
         const status: TicketStatus = assignedUser ? 'Open' : 'Queue';
         const ticketNumber = await generateUniqueTicketNumber(db);
         const now = new Date();

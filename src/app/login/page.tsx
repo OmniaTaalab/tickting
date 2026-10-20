@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Script from 'next/script';
 import {
   Card,
   CardContent,
@@ -19,43 +20,24 @@ import { useToast } from '@/hooks/use-toast';
 import { Loader2, WifiOff, AlertCircle } from 'lucide-react';
 import {
   signInWithEmailAndPassword,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signOut,
+  signInWithCustomToken,
 } from 'firebase/auth';
 import { verifyGoogleUserAction } from '@/actions/auth_google';
 
 const EMAIL_LOGIN_TIMEOUT_MS = 15000; // 15 seconds
 const GOOGLE_LOGIN_TIMEOUT_MS = 25000; // 25 seconds
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID;
 
-function GoogleIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="18"
-      height="18"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-        fill="#4285F4"
-      />
-      <path
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-        fill="#34A853"
-      />
-      <path
-        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-        fill="#FBBC05"
-      />
-      <path
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-        fill="#EA4335"
-      />
-    </svg>
-  );
+interface GoogleCredentialResponse { credential?: string; }
+declare global {
+  interface Window {
+    google?: { accounts: { id: {
+      initialize: (config: {client_id: string; callback: (response: GoogleCredentialResponse) => void; auto_select?: boolean}) => void;
+      renderButton: (element: HTMLElement, options: {theme: string; size: string; text: string; width: number}) => void;
+    } } };
+  }
 }
+
 
 function LoginForm() {
   const auth = useAuth();
@@ -72,6 +54,8 @@ function LoginForm() {
 
   const isProcessing = isEmailSubmitting || isGoogleSubmitting;
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const googleButtonRef = useRef<HTMLDivElement | null>(null);
+  const [googleScriptReady, setGoogleScriptReady] = useState(false);
 
   // Clear pending timeouts on unmount
   useEffect(() => {
@@ -248,127 +232,53 @@ function LoginForm() {
     }
   };
 
-  // Handle Sign in with Google
-  const handleGoogleSignIn = async () => {
-    // Prevent duplicate clicks
-    if (isProcessing) return;
-
-    // Check offline status
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      const offlineMsg = 'No internet connection. Please check your connection and try again.';
-      setErrorMessage(offlineMsg);
-      toast({
-        variant: 'destructive',
-        title: 'Offline',
-        description: offlineMsg,
-      });
-      return;
-    }
-
+  // Google Identity Services supplies a Google ID token without Firebase Auth sign-in.
+  // Server validates the token and membership before a Firebase custom token is issued.
+  const handleGoogleCredential = async (response: GoogleCredentialResponse) => {
+    if (isProcessing || !response.credential) return;
     setIsGoogleSubmitting(true);
     setErrorMessage(null);
-
     try {
-      if (!auth) {
-        throw new Error('AUTH_UNAVAILABLE');
-      }
-
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-
-      // Step 1: Authenticate with Firebase Google Auth (with timeout protection)
-      const userCredential = await withTimeout(
-        signInWithPopup(auth, provider),
+      if (!auth) throw new Error('AUTH_UNAVAILABLE');
+      const validation = await withTimeout(
+        verifyGoogleUserAction({ googleIdToken: response.credential }),
         GOOGLE_LOGIN_TIMEOUT_MS
       );
-
-      const googleUser = userCredential.user;
-      const googleEmail = googleUser.email?.trim().toLowerCase();
-
-      if (!googleEmail) {
-        await signOut(auth);
-        const msg = 'Unable to retrieve email from this Google account. Please contact your administrator.';
-        setErrorMessage(msg);
-        toast({
-          variant: 'destructive',
-          title: 'Sign In Failed',
-          description: msg,
-        });
+      if (!validation.success || !validation.customToken) {
+        const message = validation.message || 'Google sign-in was denied.';
+        setErrorMessage(message);
+        toast({ variant: 'destructive', title: 'Access Denied', description: message });
         return;
       }
-
-      // Step 2: Validate against Firestore employee/users records
-      // Google Sign-In must NOT automatically create a new user profile
-      const validation = await verifyGoogleUserAction({
-        email: googleEmail,
-        googleUid: googleUser.uid,
-      });
-
-      if (!validation.success) {
-        // Revoke the current local session. This does NOT delete an Auth user.
-        // Prevent a sign-out network error from hiding the actual access denial.
-        await signOut(auth).catch((signOutError) => {
-          console.error('Failed to sign out rejected Google user:', signOutError);
-        });
-
-        if (validation.status === 'NOT_REGISTERED') {
-          const msg = 'This Google account is not registered in the system. Please contact your administrator.';
-          setErrorMessage(msg);
-          toast({
-            variant: 'destructive',
-            title: 'Access Denied',
-            description: msg,
-          });
-          return;
-        }
-
-        if (validation.status === 'INACTIVE') {
-          const msg = 'Your account is inactive. Please contact your administrator.';
-          setErrorMessage(msg);
-          toast({
-            variant: 'destructive',
-            title: 'Account Inactive',
-            description: msg,
-          });
-          return;
-        }
-
-        // Generic / server error
-        setErrorMessage(validation.message);
-        toast({
-          variant: 'destructive',
-          title: 'Sign In Failed',
-          description: validation.message,
-        });
-        return;
-      }
-
-      // Step 3: User is verified and active! Redirect to system dashboard.
-      // IMPORTANT: Firebase/Firestore authorization must independently enforce
-      // employee status and permissions, regardless of this client-side redirect.
-      toast({
-        title: 'Welcome Back',
-        description: `Signed in as ${validation.userProfile?.name || googleEmail}`,
-      });
-
+      // No Firebase account is created until AFTER Firestore authorization succeeds.
+      await withTimeout(signInWithCustomToken(auth, validation.customToken), GOOGLE_LOGIN_TIMEOUT_MS);
+      toast({ title: 'Welcome Back', description: `Signed in as ${validation.userProfile?.name || 'employee'}` });
       router.replace('/dashboard');
     } catch (error: any) {
-      // Ensure user is signed out if error occurs mid-process
-      if (auth && auth.currentUser) {
-        await signOut(auth).catch(() => {});
-      }
-
-      const friendlyMsg = getFriendlyErrorMessage(error);
-      setErrorMessage(friendlyMsg);
-      toast({
-        variant: 'destructive',
-        title: 'Google Sign In Failed',
-        description: friendlyMsg,
-      });
+      const message = getFriendlyErrorMessage(error);
+      setErrorMessage(message);
+      toast({ variant: 'destructive', title: 'Google Sign In Failed', description: message });
     } finally {
       setIsGoogleSubmitting(false);
     }
   };
+
+  // Do not call Firebase signInWithPopup here: it creates Auth users prematurely.
+  // GIS renders Google's supported sign-in button; its pop-up provides the ID token.
+  useEffect(() => {
+    if (!googleScriptReady || !window.google || !googleButtonRef.current || !GOOGLE_CLIENT_ID) return;
+    const target = googleButtonRef.current;
+    target.replaceChildren();
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleCredential,
+      auto_select: false,
+    });
+    window.google.accounts.id.renderButton(target, {
+      theme: 'outline', size: 'large', text: 'signin_with', width: 300,
+    });
+    // Current callback is refreshed when state changes, ensuring loading is accurate.
+  }, [googleScriptReady, auth, isProcessing]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50/60 p-4 font-sans">
@@ -474,26 +384,14 @@ function LoginForm() {
               </div>
             </div>
 
-            {/* Sign in with Google Button */}
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full h-11 border-slate-200 hover:bg-slate-50 font-bold text-slate-700 rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-2xs hover:border-slate-300"
-              onClick={handleGoogleSignIn}
-              disabled={isProcessing || isOffline}
-            >
-              {isGoogleSubmitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin text-slate-600" />
-                  <span className="text-xs">Signing in with Google...</span>
-                </>
-              ) : (
-                <>
-                  <GoogleIcon className="h-4 w-4 shrink-0" />
-                  <span className="text-xs">Sign in with Google</span>
-                </>
-              )}
-            </Button>
+            {/* Google Identity Services official button */}
+            <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive"
+              onReady={() => setGoogleScriptReady(true)} />
+            <div className="flex flex-col items-center gap-2">
+              {isGoogleSubmitting && <span className="text-xs">Signing in with Google...</span>}
+              {!GOOGLE_CLIENT_ID && <span className="text-xs text-red-600">Missing Google OAuth Client ID configuration.</span>}
+              <div ref={googleButtonRef} aria-label="Sign in with Google" />
+            </div>
           </CardContent>
 
           <CardFooter className="pt-0 pb-6 px-6 justify-center">

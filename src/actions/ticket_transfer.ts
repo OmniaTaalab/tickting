@@ -68,7 +68,13 @@ export async function transferTicketToCategoryAction(
     const campusId = ticketData?.campusId;
 
     // 4. Get the next available assignee in that category via Round Robin
-    const newAssignee = await getRoundRobinAssignee(newCategoryId, campusId);
+    const newAssignee = await getRoundRobinAssignee({
+        departmentId: newCategoryId,
+        campusId: ticketData?.campusId,
+        schoolId: ticketData?.schoolId,
+        divisionId: ticketData?.divisionId,
+        gradeId: ticketData?.gradeId,
+    });
     
     // If no one is available, the status becomes "Queue"
     const newStatus = newAssignee ? 'Open' : 'Queue';

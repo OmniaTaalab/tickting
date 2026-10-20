@@ -176,7 +176,13 @@ export async function createTicketAction(
     let status: TicketStatus = 'Queue'; 
 
     if (isNowWorking) {
-        assignedUser = await getRoundRobinAssignee(departmentId, campusId);
+        assignedUser = await getRoundRobinAssignee({
+            departmentId,
+            campusId,
+            schoolId,
+            divisionId,
+            gradeId,
+        });
         if (assignedUser) status = 'Open';
     }
 

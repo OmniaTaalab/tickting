@@ -67,7 +67,13 @@ export async function approveRequestAction(
             const categoryName = categoryDoc.exists ? categoryDoc.data()!.name : 'Unknown Category';
             
             // Execute automatic assignment in the new category
-            const newAssignee = await getRoundRobinAssignee(newCategoryId, ticketData.campusId);
+            const newAssignee = await getRoundRobinAssignee({
+                departmentId: newCategoryId,
+                campusId: ticketData.campusId,
+                schoolId: ticketData.schoolId,
+                divisionId: ticketData.divisionId,
+                gradeId: ticketData.gradeId,
+            });
             const newStatus = newAssignee ? 'Open' : 'Queue';
 
             const transferId = requestId || `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;

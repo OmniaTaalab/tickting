@@ -35,15 +35,98 @@ export interface AutoAssignResult {
 }
 
 /**
+ * Checks if an employee profile covers a ticket based on campus, school, division, and grade.
+ * If employee has specific IDs configured, the ticket must match. If empty, employee covers all.
+ */
+function agentCoversTicket(agent: {
+    campusIds?: string[];
+    schoolIds?: string[];
+    divisionIds?: string[];
+    gradeIds?: string[];
+}, ticket: {
+    campusId?: string | null;
+    schoolId?: string | null;
+    divisionId?: string | null;
+    gradeId?: string | null;
+}): boolean {
+    // 1. Campus check
+    if (ticket.campusId && ticket.campusId !== 'all' && ticket.campusId !== 'N/A') {
+        const agentCampuses = agent.campusIds || [];
+        if (agentCampuses.length > 0 && !agentCampuses.includes(ticket.campusId)) {
+            return false;
+        }
+    }
+
+    // 2. School check
+    if (ticket.schoolId && ticket.schoolId !== 'all' && ticket.schoolId !== 'N/A') {
+        const agentSchools = agent.schoolIds || [];
+        if (agentSchools.length > 0 && !agentSchools.includes(ticket.schoolId)) {
+            return false;
+        }
+    }
+
+    // 3. Division check
+    if (ticket.divisionId && ticket.divisionId !== 'all' && ticket.divisionId !== 'N/A') {
+        const agentDivisions = agent.divisionIds || [];
+        if (agentDivisions.length > 0 && !agentDivisions.includes(ticket.divisionId)) {
+            return false;
+        }
+    }
+
+    // 4. Grade check
+    if (ticket.gradeId && ticket.gradeId !== 'all' && ticket.gradeId !== 'N/A') {
+        const agentGrades = agent.gradeIds || [];
+        if (agentGrades.length > 0 && !agentGrades.includes(ticket.gradeId)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
  * Returns the next available, logged-in staff member (Employees) in a department 
- * who is also assigned to the specific campus of the ticket.
+ * who covers the specific campus, school, division, and grade of the ticket.
  * Uses round-robin sequencing.
  */
-export async function getRoundRobinAssignee(departmentId: string, campusId?: string | null): Promise<AssigneeProfile | null> {
+export async function getRoundRobinAssignee(
+    departmentIdOrTicket: string | {
+        departmentId: string;
+        campusId?: string | null;
+        schoolId?: string | null;
+        divisionId?: string | null;
+        gradeId?: string | null;
+    },
+    campusId?: string | null,
+    schoolId?: string | null,
+    divisionId?: string | null,
+    gradeId?: string | null
+): Promise<AssigneeProfile | null> {
     const db = adminDb;
     if (!db) {
         console.warn('getRoundRobinAssignee: Firestore Admin not initialized.');
         return null;
+    }
+
+    let departmentId = '';
+    let ticketContext: {
+        campusId?: string | null;
+        schoolId?: string | null;
+        divisionId?: string | null;
+        gradeId?: string | null;
+    } = {};
+
+    if (typeof departmentIdOrTicket === 'object' && departmentIdOrTicket !== null) {
+        departmentId = departmentIdOrTicket.departmentId;
+        ticketContext = {
+            campusId: departmentIdOrTicket.campusId,
+            schoolId: departmentIdOrTicket.schoolId,
+            divisionId: departmentIdOrTicket.divisionId,
+            gradeId: departmentIdOrTicket.gradeId,
+        };
+    } else {
+        departmentId = departmentIdOrTicket;
+        ticketContext = { campusId, schoolId, divisionId, gradeId };
     }
 
     const deptRef = db.collection('departments').doc(departmentId);
@@ -58,16 +141,17 @@ export async function getRoundRobinAssignee(departmentId: string, campusId?: str
             if (!deptDoc.exists) {
                 throw new Error(`Department with ID ${departmentId} not found.`);
             }
-const department = deptDoc.data() as any;
+            const department = deptDoc.data() as any;
 
-const isNowWorking = isWithinWorkingHours(department.workingHours, new Date(), activeHolidays);
+            const isNowWorking = isWithinWorkingHours(department.workingHours, new Date(), activeHolidays);
 
-if (!isNowWorking) {
-    console.log(
-        `Outside working hours (or official holiday) for department ${departmentId}. Assignment skipped.`
-    );
-    return;
-}
+            if (!isNowWorking) {
+                console.log(
+                    `Outside working hours (or official holiday) for department ${departmentId}. Assignment skipped.`
+                );
+                return;
+            }
+
             // Get staff members with 'Employee' role in this department
             const usersSnapshot = await transaction.get(
                 db.collection('users')
@@ -85,7 +169,7 @@ if (!isNowWorking) {
                 return;
             }
 
-            // Filter staff by available & logged-in status AND matching campus
+            // Filter staff by available & logged-in status AND covering ticket attributes (campus, school, division, grade)
             const availableEmployees = usersSnapshot.docs
                 .map((doc) => {
                     const data = doc.data() as UserProfile;
@@ -96,22 +180,22 @@ if (!isNowWorking) {
                         avatarUrl: data.avatarUrl,
                         status: data.status || 'Available',
                         campusIds: data.campusIds || [],
+                        schoolIds: data.schoolIds || [],
+                        divisionIds: data.divisionIds || [],
+                        gradeIds: data.gradeIds || [],
                         activeSessionId: data.activeSessionId,
                     };
                 })
                 .filter(emp => emp.status !== 'Busy' && (emp.status === 'Available' || !!emp.activeSessionId))
-                .filter(emp => {
-                    if (!campusId || campusId === 'all' || campusId === 'N/A') return true;
-                    return emp.campusIds.includes(campusId);
-                })
+                .filter(emp => agentCoversTicket(emp, ticketContext))
                 .sort((a, b) => a.id.localeCompare(b.id));
 
             if (availableEmployees.length === 0) {
                 await logSystemEvent({
                     eventType: 'ASSIGNMENT_FAILED',
                     actor: { userId: 'system', name: 'Auto-Assign System' },
-                    message: `No available, logged-in staff in category ${departmentId} covers campus ${campusId || 'N/A'}.`,
-                    details: { departmentId, campusId, reason: 'no_staff_covering_campus' }
+                    message: `No available, logged-in staff in category ${departmentId} covering ticket scope.`,
+                    details: { departmentId, ticketContext, reason: 'no_staff_covering_scope' }
                 });
                 return;
             }
@@ -158,7 +242,7 @@ if (!isNowWorking) {
 
 /**
  * Automatically assigns queued tickets (status === 'Queue') to available, logged-in agents
- * using fair round-robin distribution per department and campus coverage.
+ * using fair round-robin distribution per department and campus/school/division/grade coverage.
  */
 export async function autoAssignQueuedTickets(options?: {
   departmentId?: string;
@@ -231,6 +315,9 @@ export async function autoAssignQueuedTickets(options?: {
     avatarUrl?: string;
     status: string;
     campusIds: string[];
+    schoolIds: string[];
+    divisionIds: string[];
+    gradeIds: string[];
     activeSessionId?: string;
   }>;
 }>();
@@ -260,6 +347,9 @@ export async function autoAssignQueuedTickets(options?: {
             avatarUrl: data.avatarUrl,
             status: data.status || 'Available',
             campusIds: data.campusIds || [],
+            schoolIds: data.schoolIds || [],
+            divisionIds: data.divisionIds || [],
+            gradeIds: data.gradeIds || [],
             activeSessionId: data.activeSessionId,
           };
         })
@@ -267,13 +357,13 @@ export async function autoAssignQueuedTickets(options?: {
         .sort((a, b) => a.id.localeCompare(b.id));
 
       const entry = {
-  deptRef,
-  name: deptName,
-  workingHours: deptData?.workingHours,
-  lastAssignedUserId: deptData?.lastAssignedUserId,
-  lastAssignedUserIndex: deptData?.lastAssignedUserIndex ?? -1,
-  availableAgents,
-};
+        deptRef,
+        name: deptName,
+        workingHours: deptData?.workingHours,
+        lastAssignedUserId: deptData?.lastAssignedUserId,
+        lastAssignedUserIndex: deptData?.lastAssignedUserIndex ?? -1,
+        availableAgents,
+      };
       deptCache.set(deptId, entry);
       return entry;
     }
@@ -294,54 +384,50 @@ export async function autoAssignQueuedTickets(options?: {
         continue;
       }
 
-    const deptInfo = await getDeptInfo(deptId);
+      const deptInfo = await getDeptInfo(deptId);
 
-if (!deptInfo) {
-  skippedTickets.push({
-    ticketId,
-    ticketNumber: ticket.ticketNumber,
-    subject: ticket.subject,
-    reason: 'Department not found',
-  });
-  continue;
-}
+      if (!deptInfo) {
+        skippedTickets.push({
+          ticketId,
+          ticketNumber: ticket.ticketNumber,
+          subject: ticket.subject,
+          reason: 'Department not found',
+        });
+        continue;
+      }
 
-// ✅ Don't assign queued tickets outside department working hours or on official holidays
-const isNowWorking = isWithinWorkingHours(deptInfo.workingHours, new Date(), activeHolidays);
+      // ✅ Don't assign queued tickets outside department working hours or on official holidays
+      const isNowWorking = isWithinWorkingHours(deptInfo.workingHours, new Date(), activeHolidays);
 
-if (!isNowWorking) {
-  skippedTickets.push({
-    ticketId,
-    ticketNumber: ticket.ticketNumber,
-    subject: ticket.subject,
-    reason: `Outside working hours for category "${deptInfo.name}"`,
-  });
-  continue;
-}
+      if (!isNowWorking) {
+        skippedTickets.push({
+          ticketId,
+          ticketNumber: ticket.ticketNumber,
+          subject: ticket.subject,
+          reason: `Outside working hours for category "${deptInfo.name}"`,
+        });
+        continue;
+      }
 
-if (deptInfo.availableAgents.length === 0) {
-  skippedTickets.push({
-    ticketId,
-    ticketNumber: ticket.ticketNumber,
-    subject: ticket.subject,
-    reason: `No available, logged-in agents in category "${deptInfo.name}"`,
-  });
-  continue;
-}
+      if (deptInfo.availableAgents.length === 0) {
+        skippedTickets.push({
+          ticketId,
+          ticketNumber: ticket.ticketNumber,
+          subject: ticket.subject,
+          reason: `No available, logged-in agents in category "${deptInfo.name}"`,
+        });
+        continue;
+      }
 
-      // Filter agents covering the ticket's campus (if specified)
-      const campusId = ticket.campusId;
-      const eligibleAgents = deptInfo.availableAgents.filter(emp => {
-        if (!campusId || campusId === 'all' || campusId === 'N/A') return true;
-        return emp.campusIds.includes(campusId);
-      });
+      // Filter agents covering the ticket's campus, school, division, and grade
+      const eligibleAgents = deptInfo.availableAgents.filter(emp => agentCoversTicket(emp, ticket));
 
       if (eligibleAgents.length === 0) {
         skippedTickets.push({
           ticketId,
           ticketNumber: ticket.ticketNumber,
           subject: ticket.subject,
-          reason: `No available, logged-in agent covers campus "${ticket.campusName || campusId}"`,
+          reason: `No available, logged-in agent covers the ticket's campus/school/division/grade scope`,
         });
         continue;
       }
@@ -379,73 +465,64 @@ if (deptInfo.availableAgents.length === 0) {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // Send ticket event / in-app notification to the assigned agent
-      await db.collection('ticket-events').add({
-        ticketId,
-        eventType: 'TICKET_STATUS_CHANGED',
-        title: 'Ticket Assigned from Queue',
-        message: `Ticket #${ticket.ticketNumber || ticketId} ("${(ticket.subject || '').substring(0, 35)}...") was automatically assigned to you from Queue via round-robin distribution.`,
-        recipient: chosenAgent.id,
-        read: false,
-        timestamp: FieldValue.serverTimestamp(),
+      // Update department pointer in Firestore DB as well
+      await deptInfo.deptRef.update({
+        lastAssignedUserId: chosenAgent.id,
+        lastAssignedUserIndex: nextIndex,
+        updatedAt: FieldValue.serverTimestamp(),
       });
 
-      // System audit log
+      assignments.push({
+        ticketId,
+        ticketNumber: ticket.ticketNumber,
+        subject: ticket.subject,
+        assigneeId: chosenAgent.id,
+        assigneeName: chosenAgent.name,
+        departmentId: deptId,
+        departmentName: deptInfo.name,
+        campusId: ticket.campusId || null,
+        campusName: ticket.campusName || null,
+      });
+
       await logSystemEvent({
-        eventType: 'TICKET_AUTO_ASSIGNED_FROM_QUEUE',
+        eventType: 'TICKET_AUTO_ASSIGNED',
         actor: { userId: 'system', name: 'Auto-Assign System' },
-        message: `Queued ticket #${ticket.ticketNumber || ticketId} auto-assigned to ${chosenAgent.name} via round-robin.`,
+        message: `Ticket #${ticket.ticketNumber || ticketId.substring(0, 6)} automatically assigned to ${chosenAgent.name} based on matching scope.`,
         details: {
           ticketId,
           ticketNumber: ticket.ticketNumber,
           assigneeId: chosenAgent.id,
           assigneeName: chosenAgent.name,
           departmentId: deptId,
-          campusId: campusId || null,
+          campusId: ticket.campusId,
+          schoolId: ticket.schoolId,
+          divisionId: ticket.divisionId,
+          gradeId: ticket.gradeId,
         },
       });
 
-      assignments.push({
+      // Create internal notification for assigned agent
+      await db.collection('ticket-events').add({
         ticketId,
-        ticketNumber: ticket.ticketNumber,
-        subject: ticket.subject || 'Ticket',
-        assigneeId: chosenAgent.id,
-        assigneeName: chosenAgent.name,
-        departmentId: deptId,
-        departmentName: deptInfo.name,
-        campusId,
-        campusName: ticket.campusName,
+        eventType: 'ASSIGNED',
+        title: 'New Ticket Assigned',
+        message: `Ticket #${ticket.ticketNumber || ticketId.substring(0, 6)} assigned to you based on department, campus, school, division and grade scope.`,
+        recipient: chosenAgent.id,
+        read: false,
+        timestamp: FieldValue.serverTimestamp(),
       });
     }
 
-    // Persist updated department round-robin indices
-    for (const [, deptInfo] of deptCache.entries()) {
-      if (deptInfo.lastAssignedUserId) {
-        await deptInfo.deptRef.update({
-          lastAssignedUserId: deptInfo.lastAssignedUserId,
-          lastAssignedUserIndex: deptInfo.lastAssignedUserIndex,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      }
-    }
-
-    if (assignments.length > 0) {
-      revalidatePath('/tickets');
-      revalidatePath('/dashboard');
-    }
-
-    const assignedCount = assignments.length;
-    const message = assignedCount > 0
-      ? `Successfully auto-assigned ${assignedCount} queued ticket${assignedCount > 1 ? 's' : ''} to available, logged-in agents.`
-      : `No queued tickets could be assigned (${skippedTickets.length} pending - no eligible agents available/logged-in).`;
+    revalidatePath('/tickets');
+    revalidatePath('/dashboard');
 
     return {
       success: true,
-      assignedCount,
+      assignedCount: assignments.length,
       totalQueued,
       assignments,
       skippedTickets,
-      message,
+      message: `Successfully auto-assigned ${assignments.length} of ${totalQueued} queued tickets.`,
     };
   } catch (error: any) {
     console.error('Error auto-assigning queued tickets:', error);
@@ -455,15 +532,7 @@ if (deptInfo.availableAgents.length === 0) {
       totalQueued: 0,
       assignments: [],
       skippedTickets: [],
-      message: error.message || 'Auto-assignment failed.',
+      message: error?.message || 'Database error during auto-assignment.',
     };
   }
 }
-
-/**
- * Server Action callable from client UI to trigger queue auto-assignment
- */
-export async function assignQueuedTicketsAction(departmentId?: string): Promise<AutoAssignResult> {
-  return autoAssignQueuedTickets({ departmentId: departmentId || undefined });
-}
-
