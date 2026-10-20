@@ -1,8 +1,8 @@
-'use server';
+
+    'use server';
 
 import { adminDb, adminAuth } from '@/lib/firebaseAdmin';
-import { FieldValue } from 'firebase-admin/firestore';
-import type { UserProfile } from '@/lib/types';
+import type { DecodedIdToken } from 'firebase-admin/auth';
 
 export interface VerifyGoogleUserResult {
   success: boolean;
@@ -19,173 +19,112 @@ export interface VerifyGoogleUserResult {
 }
 
 /**
- * Validates a Google-authenticated user against existing system/employee records in Firestore.
- * Ensures:
- * 1. The email must already exist in Firestore `users`.
- * 2. Does NOT create a new employee profile if unapproved.
- * 3. Checks if the account is deactivated or inactive.
- * 4. Links the Google UID if necessary without creating duplicates.
+ * Verify the Firebase ID token on the server; never trust an email/UID supplied
+ * by a browser. This only authorizes an application login. It does NOT prevent
+ * Firebase Authentication from creating a Google user during signInWithPopup.
+ *
+ * IMPORTANT: Enforce the same authorization in Firestore Security Rules and
+ * privileged server actions; a client-side login check alone is not security.
  */
 export async function verifyGoogleUserAction(params: {
-  email: string;
-  googleUid: string;
+  idToken: string;
 }): Promise<VerifyGoogleUserResult> {
-  const db = adminDb;
-  const auth = adminAuth;
+  const reject = (
+    status: VerifyGoogleUserResult['status'],
+    message: string
+  ): VerifyGoogleUserResult => ({ success: false, status, message });
 
-  if (!db) {
-    return {
-      success: false,
-      status: 'ERROR',
-      message: 'Database connection is temporarily unavailable. Please try again.',
-    };
+  if (!adminDb || !adminAuth) {
+    return reject('ERROR', 'Authentication service is temporarily unavailable. Please try again.');
   }
-
-  const rawEmail = (params.email || '').trim();
-  const normalizedEmail = rawEmail.toLowerCase();
-  const googleUid = (params.googleUid || '').trim();
-
-  if (!rawEmail || !googleUid) {
-    return {
-      success: false,
-      status: 'NOT_REGISTERED',
-      message: 'This Google account is not registered in the system. Please contact your administrator.',
-    };
+  if (!params?.idToken || typeof params.idToken !== 'string') {
+    return reject('ERROR', 'Missing authentication credentials. Please sign in again.');
   }
 
   try {
-    // 1. Check if user document exists with exact googleUid
-    let userDoc = await db.collection('users').doc(googleUid).get();
-    let userData: any = null;
-    let existingDocId = googleUid;
+    // Verify signature, expiry, issuer/audience and revocation using Firebase Admin.
+    const decoded: DecodedIdToken = await adminAuth.verifyIdToken(params.idToken, true);
+    const uid = decoded.uid;
+    const email = decoded.email?.trim().toLowerCase();
+    if (!email || decoded.email_verified !== true) {
+      return reject('NOT_REGISTERED', 'A verified Google email is required. Please contact your administrator.');
+    }
 
-    if (userDoc.exists) {
-      userData = userDoc.data();
-      existingDocId = userDoc.id;
-    } else {
-      // 2. Query by email
-      const queryByEmail = await db
-        .collection('users')
-        .where('email', '==', rawEmail)
-        .limit(1)
-        .get();
+    // Require the authentication provider to be Google, not merely an email match.
+    if (decoded.firebase?.sign_in_provider !== 'google.com') {
+      return reject('NOT_REGISTERED', 'Please sign in using your registered Google account.');
+    }
 
-      if (!queryByEmail.empty) {
-        userDoc = queryByEmail.docs[0];
-        userData = userDoc.data();
-        existingDocId = userDoc.id;
-      } else {
-        // Try query by lowercased email
-        const queryByLowerEmail = await db
-          .collection('users')
-          .where('email', '==', normalizedEmail)
-          .limit(1)
-          .get();
+    const authUser = await adminAuth.getUser(uid);
+    if (authUser.disabled) {
+      return reject('INACTIVE', 'Your account is inactive. Please contact your administrator.');
+    }
 
-        if (!queryByLowerEmail.empty) {
-          userDoc = queryByLowerEmail.docs[0];
-          userData = userDoc.data();
-          existingDocId = userDoc.id;
-        } else {
-          // Fallback: scan all users to match case-insensitively
-          const allUsersSnapshot = await db.collection('users').get();
-          const matched = allUsersSnapshot.docs.find((d) => {
-            const docEmail = (d.data()?.email || '').trim().toLowerCase();
-            return docEmail === normalizedEmail;
-          });
+    const users = adminDb.collection('users');
+    const byUid = await users.doc(uid).get();
+    let profileDoc = byUid.exists ? byUid : undefined;
 
-          if (matched) {
-            userDoc = matched;
-            userData = matched.data();
-            existingDocId = matched.id;
-          }
-        }
+    // Never accept a UID-linked profile with a different email address.
+    if (profileDoc) {
+      const profileEmail = String(profileDoc.data()?.email ?? '').trim().toLowerCase();
+      if (profileEmail !== email) {
+        console.error('[verifyGoogleUserAction] UID/email mismatch:', uid);
+        return reject('ERROR', 'Your account has a profile mismatch. Please contact your administrator.');
       }
+    } else {
+      // Compatibility with older employee documents keyed by an employee ID.
+      // Prefer a normalized `emailLower` field for all new/updated profiles.
+      const candidates = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+      for (const field of ['emailLower', 'email']) {
+        const result = await users.where(field, '==', email).limit(2).get();
+        result.docs.forEach((doc) => candidates.set(doc.id, doc));
+      }
+      // Legacy capitalization support: avoid scanning all employees on login.
+      // Run a one-time data backfill to populate emailLower for legacy records.
+      if (candidates.size > 1) {
+        console.error('[verifyGoogleUserAction] Duplicate employee email:', email);
+        return reject('ERROR', 'Multiple employee records use this email. Please contact your administrator.');
+      }
+      profileDoc = candidates.values().next().value;
     }
 
-    // If user does not exist in the system
-    if (!userData) {
-      return {
-        success: false,
-        status: 'NOT_REGISTERED',
-        message: 'This Google account is not registered in the system. Please contact your administrator.',
-      };
+    if (!profileDoc) {
+      return reject('NOT_REGISTERED', 'This Google account is not registered in the system. Please contact your administrator.');
     }
 
-    // 3. Check if user is inactive / deactivated
+    const userData = profileDoc.data() || {};
+    const profileEmail = String(userData.email ?? '').trim().toLowerCase();
+    if (profileEmail !== email) {
+      return reject('ERROR', 'Your account has a profile mismatch. Please contact your administrator.');
+    }
+    const status = String(userData.status ?? '').trim().toLowerCase();
     const isInactive =
       userData.isActive === false ||
       userData.disabled === true ||
       userData.isDeactivated === true ||
-      userData.status === 'Inactive' ||
-      userData.status === 'Disabled';
+      ['inactive', 'disabled', 'deactivated'].includes(status);
 
     if (isInactive) {
-      return {
-        success: false,
-        status: 'INACTIVE',
-        message: 'Your account is inactive. Please contact your administrator.',
-      };
+      return reject('INACTIVE', 'Your account is inactive. Please contact your administrator.');
     }
 
-    // Check Firebase Auth disabled state if auth SDK is available
-    if (auth) {
-      try {
-        const authUser = await auth.getUser(googleUid).catch(() => null);
-        if (authUser?.disabled) {
-          return {
-            success: false,
-            status: 'INACTIVE',
-            message: 'Your account is inactive. Please contact your administrator.',
-          };
-        }
-      } catch {
-        // Ignore auth user lookup failure
-      }
-    }
-
-    // 4. If existingDocId is different from googleUid, ensure seamless linkage without duplicates
-    if (existingDocId !== googleUid) {
-      // Check if doc(googleUid) already exists
-      const targetDoc = await db.collection('users').doc(googleUid).get();
-      if (!targetDoc.exists) {
-        // Copy existing profile to googleUid so all client hooks & firestore rules work seamlessly
-        await db.collection('users').doc(googleUid).set({
-          ...userData,
-          id: googleUid,
-          authId: googleUid,
-          linkedFromUserId: existingDocId,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-
-        // Mark the old document as linked so it is not shown as a duplicate employee
-        await db.collection('users').doc(existingDocId).update({
-          authId: googleUid,
-          isLinkedTo: googleUid,
-          updatedAt: FieldValue.serverTimestamp(),
-        }).catch(() => {});
-      }
-    }
-
+    // Do not copy or rewrite profile documents during login: that creates
+    // duplicate employees and can break references/permissions.
     return {
       success: true,
       status: 'ALLOWED',
       message: 'Authentication successful.',
       userProfile: {
-        id: googleUid,
-        name: userData.name || '',
-        email: userData.email || rawEmail,
-        role: userData.role || 'Employee',
+        id: profileDoc.id, // The existing canonical Firestore employee profile ID
+        name: String(userData.name ?? ''),
+        email: String(userData.email ?? email),
+        role: String(userData.role ?? 'Employee'),
         departmentId: userData.departmentId,
-        campusIds: userData.campusIds || [],
+        campusIds: Array.isArray(userData.campusIds) ? userData.campusIds : [],
       },
     };
-  } catch (error: any) {
-    console.error('[verifyGoogleUserAction] Error verifying user:', error);
-    return {
-      success: false,
-      status: 'ERROR',
-      message: 'An unexpected error occurred while verifying your account. Please try again.',
-    };
+  } catch (error) {
+    console.error('[verifyGoogleUserAction] Verification failed:', error);
+    return reject('ERROR', 'Unable to verify your account. Please try again.');
   }
 }

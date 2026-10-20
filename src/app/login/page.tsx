@@ -231,8 +231,9 @@ function LoginForm() {
         EMAIL_LOGIN_TIMEOUT_MS
       );
 
-      // On successful auth, AuthInitializer redirects to /dashboard
-      router.replace('/dashboard');
+      // Do not redirect before the app's AuthInitializer confirms authorization.
+      // AuthInitializer is responsible for routing an approved user to /dashboard.
+
     } catch (error: any) {
       const friendlyMsg = getFriendlyErrorMessage(error);
       setErrorMessage(friendlyMsg);
@@ -282,7 +283,7 @@ function LoginForm() {
       );
 
       const googleUser = userCredential.user;
-      const googleEmail = googleUser.email?.trim();
+      const googleEmail = googleUser.email?.trim().toLowerCase();
 
       if (!googleEmail) {
         await signOut(auth);
@@ -304,8 +305,11 @@ function LoginForm() {
       });
 
       if (!validation.success) {
-        // Sign user out immediately
-        await signOut(auth);
+        // Revoke the current local session. This does NOT delete an Auth user.
+        // Prevent a sign-out network error from hiding the actual access denial.
+        await signOut(auth).catch((signOutError) => {
+          console.error('Failed to sign out rejected Google user:', signOutError);
+        });
 
         if (validation.status === 'NOT_REGISTERED') {
           const msg = 'This Google account is not registered in the system. Please contact your administrator.';
@@ -339,7 +343,9 @@ function LoginForm() {
         return;
       }
 
-      // Step 3: User is verified and active! Redirect to system dashboard
+      // Step 3: User is verified and active! Redirect to system dashboard.
+      // IMPORTANT: Firebase/Firestore authorization must independently enforce
+      // employee status and permissions, regardless of this client-side redirect.
       toast({
         title: 'Welcome Back',
         description: `Signed in as ${validation.userProfile?.name || googleEmail}`,
