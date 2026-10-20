@@ -21,7 +21,8 @@
     "googleapis": "^170.0.0",
     "imap-simple": "^5.1.0",
     "imapflow": "^1.2.9",
-    "mailparser": "^3.9.3"
+    "mailparser": "^3.9.3",
+    "nextn": "file:.."
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^5.12.0",
