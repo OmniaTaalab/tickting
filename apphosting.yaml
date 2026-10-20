@@ -2,6 +2,11 @@
 # https://firebase.google.com/docs/app-hosting/configure
 
 runConfig:
-  # Increase this value if you'd like to automatically spin up
-  # more instances in response to increased traffic.
   maxInstances: 1
+
+env:
+  - variable: NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID
+    value: "253572129339-kbebo2gqi9jih3omm3dsafh4cio2uqdc.apps.googleusercontent.com"
+    availability:
+      - BUILD
+      - RUNTIME
