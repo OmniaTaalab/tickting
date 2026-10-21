@@ -1262,7 +1262,9 @@ function resolveMailboxRouting(
             selectedRoute?.division ||
             (divisions.length === 1 ? divisions[0] : null),
         gradeName:
-            matchedGrades.length === 1 ? matchedGrades[0] : null,
+            matchedGrades.length === 1 &&
+            selectedRoute?.grades.some((g) => normalizeRoutingText(g) === normalizeRoutingText(matchedGrades[0]))
+                ? matchedGrades[0] : null,
         schools,
         divisions,
         allowedGrades,
@@ -1298,112 +1300,56 @@ function hasNormalizedOverlap(left: string[], right: string[]): boolean {
 }
 
 function employeeMatchesMailbox(
-  employee: any,
-  mailbox: any,
-  routing: any
+    employee: any,
+    mailbox: MailboxConfig,
+    routing: ResolvedRouting
 ): boolean {
-  // Employee must be Available and logged in
-  if (employee.role !== "Employee") return false;
-  if (employee.status !== "Available") return false;
-  if (!employee.activeSessionId) return false;
+    // Only an available, logged-in employee may receive an email ticket.
+    if (employee.role !== "Employee" || employee.status !== "Available") return false;
+    if (!employee.activeSessionId) return false;
 
-  // Category is already filtered using departmentId in syncEmails
+    // Category/Department is filtered by the Firestore query in syncEmails.
+    // Campus is mandatory for automatic assignment.
+    const campuses = collectEmployeeValues(employee.campusId, employee.campusIds);
+    if (!mailbox.campusId || !campuses.includes(mailbox.campusId)) return false;
 
-  // Campus must match
-  const employeeCampuses = collectEmployeeValues(
-    employee.campusId,
-    employee.campusIds
-  );
+    // A mailbox with multiple possible routes cannot be safely assigned
+    // until a single school/division route is identified.
+    if (!routing.selectedRoute || !routing.schoolName || !routing.divisionName) return false;
 
-  if (
-    !mailbox.campusId ||
-    !employeeCampuses.includes(mailbox.campusId)
-  ) {
-    return false;
-  }
+    const schools = collectEmployeeValues(
+        employee.schools, employee.schoolNames, employee.school,
+        employee.schoolName, employee.curriculums, employee.curriculum
+    );
+    if (!hasNormalizedOverlap(schools, [routing.schoolName])) return false;
 
-  // School, Division and Grade must be clearly identified
-  if (
-    !routing.schoolName ||
-    !routing.divisionName ||
-    !routing.gradeName
-  ) {
-    return false;
-  }
+    const divisions = collectEmployeeValues(
+        employee.divisions, employee.divisionNames,
+        employee.division, employee.divisionName
+    );
+    if (!hasNormalizedOverlap(divisions, [routing.divisionName])) return false;
 
-  // School must match
-  const employeeSchools = collectEmployeeValues(
-    employee.schools,
-    employee.schoolNames,
-    employee.school,
-    employee.schoolName,
-    employee.curriculums,
-    employee.curriculum
-  );
+    // The mailbox's configured grades determine the eligible scope.
+    // A grade mentioned unambiguously in the email narrows the scope;
+    // otherwise any grade covered by that specific mailbox route is valid.
+    const requiredGrades = routing.gradeName
+        ? [routing.gradeName]
+        : routing.selectedRoute.grades;
+    const grades = collectEmployeeValues(
+        employee.grades, employee.gradeNames,
+        employee.grade, employee.gradeName
+    );
+    if (!requiredGrades.length || !hasNormalizedOverlap(grades, requiredGrades)) return false;
 
-  if (
-    !hasNormalizedOverlap(
-      employeeSchools,
-      [routing.schoolName]
-    )
-  ) {
-    return false;
-  }
-
-  // Division must match
-  const employeeDivisions = collectEmployeeValues(
-    employee.divisions,
-    employee.divisionNames,
-    employee.division,
-    employee.divisionName
-  );
-
-  if (
-    !hasNormalizedOverlap(
-      employeeDivisions,
-      [routing.divisionName]
-    )
-  ) {
-    return false;
-  }
-
-  // Grade must match
-  const employeeGrades = collectEmployeeValues(
-    employee.grades,
-    employee.gradeNames,
-    employee.grade,
-    employee.gradeName
-  );
-
-  if (
-    !hasNormalizedOverlap(
-      employeeGrades,
-      [routing.gradeName]
-    )
-  ) {
-    return false;
-  }
-
-  // Respect mailbox restrictions if configured
-  const employeeMailboxEmails = collectEmployeeValues(
-    employee.mailboxEmails,
-    employee.queueEmails,
-    employee.mailboxes
-  );
-
-  if (
-    employeeMailboxEmails.length > 0 &&
-    !employeeMailboxEmails.some(
-      (email: string) =>
-        email.toLowerCase() === mailbox.email.toLowerCase()
-    )
-  ) {
-    return false;
-  }
-
-  return true;
+    const mailboxEmails = collectEmployeeValues(
+        employee.mailboxEmails, employee.queueEmails, employee.mailboxes
+    );
+    if (mailboxEmails.length &&
+        !mailboxEmails.some((email) => email.toLowerCase() === mailbox.email.toLowerCase())) {
+        return false;
+    }
+    return true;
 }
-
 
 async function extractEmailBody(
     gmail: any,
