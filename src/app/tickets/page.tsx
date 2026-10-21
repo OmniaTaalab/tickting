@@ -30,6 +30,7 @@ import { autoAssignQueuedTickets } from '@/actions/ticket_assignment';
 import { fixDuplicateTicketNumbersAction } from '@/actions/ticket_deduplicate';
 
 
+
 const toDate = (ts: any): Date | null => {
   if (!ts) return null;
   if (typeof ts.toDate === 'function') return ts.toDate();

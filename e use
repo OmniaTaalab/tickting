@@ -1,0 +1,201 @@
+[1mdiff --git a/functions/src/index.ts b/functions/src/index.ts[m
+[1mindex 8c475ec..ffeefc8 100644[m
+[1m--- a/functions/src/index.ts[m
+[1m+++ b/functions/src/index.ts[m
+[36m@@ -1298,93 +1298,113 @@[m [mfunction hasNormalizedOverlap(left: string[], right: string[]): boolean {[m
+ }[m
+ [m
+ function employeeMatchesMailbox([m
+[31m-    employee: any,[m
+[31m-    mailbox: MailboxConfig,[m
+[31m-    routing: ResolvedRouting[m
+[32m+[m[32m  employee: any,[m
+[32m+[m[32m  mailbox: any,[m
+[32m+[m[32m  routing: any[m
+ ): boolean {[m
+[31m-    if (employee.status === "Busy") return false;[m
+[31m-[m
+[31m-    if ([m
+[31m-        mailbox.campusId &&[m
+[31m-        !(employee.campusIds || []).includes(mailbox.campusId)[m
+[31m-    ) {[m
+[31m-        return false;[m
+[31m-    }[m
+[31m-[m
+[31m-    // Optional queue-level restriction. If a user document already has one of[m
+[31m-    // these fields, it will be respected. If not, routing remains backward compatible.[m
+[31m-    const employeeMailboxEmails = collectEmployeeValues([m
+[31m-        employee.mailboxEmails,[m
+[31m-        employee.queueEmails,[m
+[31m-        employee.mailboxes[m
+[31m-    );[m
+[31m-[m
+[31m-    if ([m
+[31m-        employeeMailboxEmails.length > 0 &&[m
+[31m-        !employeeMailboxEmails.some([m
+[31m-            (email) => email.toLowerCase() === mailbox.email.toLowerCase()[m
+[31m-        )[m
+[31m-    ) {[m
+[31m-        return false;[m
+[31m-    }[m
+[31m-[m
+[31m-    // Optional grade restriction.[m
+[31m-    const employeeGrades = collectEmployeeValues([m
+[31m-        employee.grades,[m
+[31m-        employee.gradeNames,[m
+[31m-        employee.grade,[m
+[31m-        employee.gradeName[m
+[31m-    );[m
+[31m-[m
+[31m-    const requiredGrades = routing.gradeName[m
+[31m-        ? [routing.gradeName][m
+[31m-        : routing.allowedGrades;[m
+[31m-[m
+[31m-    if ([m
+[31m-        employeeGrades.length > 0 &&[m
+[31m-        requiredGrades.length > 0 &&[m
+[31m-        !hasNormalizedOverlap(employeeGrades, requiredGrades)[m
+[31m-    ) {[m
+[31m-        return false;[m
+[31m-    }[m
+[31m-[m
+[31m-    // Optional school / curriculum restriction.[m
+[31m-    const employeeSchools = collectEmployeeValues([m
+[31m-        employee.schools,[m
+[31m-        employee.schoolNames,[m
+[31m-        employee.school,[m
+[31m-        employee.schoolName,[m
+[31m-        employee.curriculums,[m
+[31m-        employee.curriculum[m
+[31m-    );[m
+[31m-[m
+[31m-    if ([m
+[31m-        employeeSchools.length > 0 &&[m
+[31m-        routing.schoolName &&[m
+[31m-        !hasNormalizedOverlap(employeeSchools, [routing.schoolName])[m
+[31m-    ) {[m
+[31m-        return false;[m
+[31m-    }[m
+[31m-[m
+[31m-    // Optional division restriction.[m
+[31m-    const employeeDivisions = collectEmployeeValues([m
+[31m-        employee.divisions,[m
+[31m-        employee.divisionNames,[m
+[31m-        employee.division,[m
+[31m-        employee.divisionName[m
+[31m-    );[m
+[31m-[m
+[31m-    if ([m
+[31m-        employeeDivisions.length > 0 &&[m
+[31m-        routing.divisionName &&[m
+[31m-        !hasNormalizedOverlap(employeeDivisions, [routing.divisionName])[m
+[31m-    ) {[m
+[31m-        return false;[m
+[31m-    }[m
+[32m+[m[32m  // Employee must be Available and logged in[m
+[32m+[m[32m  if (employee.role !== "Employee") return false;[m
+[32m+[m[32m  if (employee.status !== "Available") return false;[m
+[32m+[m[32m  if (!employee.activeSessionId) return false;[m
+[32m+[m
+[32m+[m[32m  // Category is already filtered using departmentId in syncEmails[m
+[32m+[m
+[32m+[m[32m  // Campus must match[m
+[32m+[m[32m  const employeeCampuses = collectEmployeeValues([m
+[32m+[m[32m    employee.campusId,[m
+[32m+[m[32m    employee.campusIds[m
+[32m+[m[32m  );[m
+[32m+[m
+[32m+[m[32m  if ([m
+[32m+[m[32m    !mailbox.campusId ||[m
+[32m+[m[32m    !employeeCampuses.includes(mailbox.campusId)[m
+[32m+[m[32m  ) {[m
+[32m+[m[32m    return false;[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // School, Division and Grade must be clearly identified[m
+[32m+[m[32m  if ([m
+[32m+[m[32m    !routing.schoolName ||[m
+[32m+[m[32m    !routing.divisionName ||[m
+[32m+[m[32m    !routing.gradeName[m
+[32m+[m[32m  ) {[m
+[32m+[m[32m    return false;[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // School must match[m
+[32m+[m[32m  const employeeSchools = collectEmployeeValues([m
+[32m+[m[32m    employee.schools,[m
+[32m+[m[32m    employee.schoolNames,[m
+[32m+[m[32m    employee.school,[m
+[32m+[m[32m    employee.schoolName,[m
+[32m+[m[32m    employee.curriculums,[m
+[32m+[m[32m    employee.curriculum[m
+[32m+[m[32m  );[m
+[32m+[m
+[32m+[m[32m  if ([m
+[32m+[m[32m    !hasNormalizedOverlap([m
+[32m+[m[32m      employeeSchools,[m
+[32m+[m[32m      [routing.schoolName][m
+[32m+[m[32m    )[m
+[32m+[m[32m  ) {[m
+[32m+[m[32m    return false;[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // Division must match[m
+[32m+[m[32m  const employeeDivisions = collectEmployeeValues([m
+[32m+[m[32m    employee.divisions,[m
+[32m+[m[32m    employee.divisionNames,[m
+[32m+[m[32m    employee.division,[m
+[32m+[m[32m    employee.divisionName[m
+[32m+[m[32m  );[m
+[32m+[m
+[32m+[m[32m  if ([m
+[32m+[m[32m    !hasNormalizedOverlap([m
+[32m+[m[32m      employeeDivisions,[m
+[32m+[m[32m      [routing.divisionName][m
+[32m+[m[32m    )[m
+[32m+[m[32m  ) {[m
+[32m+[m[32m    return false;[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // Grade must match[m
+[32m+[m[32m  const employeeGrades = collectEmployeeValues([m
+[32m+[m[32m    employee.grades,[m
+[32m+[m[32m    employee.gradeNames,[m
+[32m+[m[32m    employee.grade,[m
+[32m+[m[32m    employee.gradeName[m
+[32m+[m[32m  );[m
+[32m+[m
+[32m+[m[32m  if ([m
+[32m+[m[32m    !hasNormalizedOverlap([m
+[32m+[m[32m      employeeGrades,[m
+[32m+[m[32m      [routing.gradeName][m
+[32m+[m[32m    )[m
+[32m+[m[32m  ) {[m
+[32m+[m[32m    return false;[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // Respect mailbox restrictions if configured[m
+[32m+[m[32m  const employeeMailboxEmails = collectEmployeeValues([m
+[32m+[m[32m    employee.mailboxEmails,[m
+[32m+[m[32m    employee.queueEmails,[m
+[32m+[m[32m    employee.mailboxes[m
+[32m+[m[32m  );[m
+[32m+[m
+[32m+[m[32m  if ([m
+[32m+[m[32m    employeeMailboxEmails.length > 0 &&[m
+[32m+[m[32m    !employeeMailboxEmails.some([m
+[32m+[m[32m      (email: string) =>[m
+[32m+[m[32m        email.toLowerCase() === mailbox.email.toLowerCase()[m
+[32m+[m[32m    )[m
+[32m+[m[32m  ) {[m
+[32m+[m[32m    return false;[m
+[32m+[m[32m  }[m
+ [m
+[31m-    return true;[m
+[32m+[m[32m  return true;[m
+ }[m
+ [m
+[32m+[m
+ async function extractEmailBody([m
+     gmail: any,[m
+     messageId: string,[m

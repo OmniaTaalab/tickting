@@ -124,9 +124,43 @@ function initializeFirebaseAdmin() {
     }
   }
 
+  // Local development using Application Default Credentials
+  if (process.env.NODE_ENV === 'development') {
+    try {
+      const localProjectId = process.env.FIREBASE_PROJECT_ID;
+
+      if (!localProjectId) {
+        console.warn(
+          '[FirebaseAdmin] FIREBASE_PROJECT_ID is required for local ADC.'
+        );
+        return;
+      }
+
+      admin.initializeApp({
+        credential: admin.credential.applicationDefault(),
+        projectId: localProjectId,
+        storageBucket:
+          process.env.FIREBASE_STORAGE_BUCKET ||
+          `${localProjectId}.firebasestorage.app`,
+      });
+
+      console.log(
+        '[FirebaseAdmin] Initialized using local ADC.'
+      );
+      return;
+    } catch (error: any) {
+      console.error(
+        '[FirebaseAdmin] Local ADC initialization failed:',
+        error?.message || error
+      );
+      return;
+    }
+  }
+
   console.warn(
     '[FirebaseAdmin] Firebase Admin credentials are not available in this environment.'
   );
+
 }
 
 initializeFirebaseAdmin();

@@ -1298,92 +1298,112 @@ function hasNormalizedOverlap(left: string[], right: string[]): boolean {
 }
 
 function employeeMatchesMailbox(
-    employee: any,
-    mailbox: MailboxConfig,
-    routing: ResolvedRouting
+  employee: any,
+  mailbox: any,
+  routing: any
 ): boolean {
-    if (employee.status === "Busy") return false;
+  // Employee must be Available and logged in
+  if (employee.role !== "Employee") return false;
+  if (employee.status !== "Available") return false;
+  if (!employee.activeSessionId) return false;
 
-    if (
-        mailbox.campusId &&
-        !(employee.campusIds || []).includes(mailbox.campusId)
-    ) {
-        return false;
-    }
+  // Category is already filtered using departmentId in syncEmails
 
-    // Optional queue-level restriction. If a user document already has one of
-    // these fields, it will be respected. If not, routing remains backward compatible.
-    const employeeMailboxEmails = collectEmployeeValues(
-        employee.mailboxEmails,
-        employee.queueEmails,
-        employee.mailboxes
-    );
+  // Campus must match
+  const employeeCampuses = collectEmployeeValues(
+    employee.campusId,
+    employee.campusIds
+  );
 
-    if (
-        employeeMailboxEmails.length > 0 &&
-        !employeeMailboxEmails.some(
-            (email) => email.toLowerCase() === mailbox.email.toLowerCase()
-        )
-    ) {
-        return false;
-    }
+  if (
+    !mailbox.campusId ||
+    !employeeCampuses.includes(mailbox.campusId)
+  ) {
+    return false;
+  }
 
-    // Optional grade restriction.
-    const employeeGrades = collectEmployeeValues(
-        employee.grades,
-        employee.gradeNames,
-        employee.grade,
-        employee.gradeName
-    );
+  // School, Division and Grade must be clearly identified
+  if (
+    !routing.schoolName ||
+    !routing.divisionName ||
+    !routing.gradeName
+  ) {
+    return false;
+  }
 
-    const requiredGrades = routing.gradeName
-        ? [routing.gradeName]
-        : routing.allowedGrades;
+  // School must match
+  const employeeSchools = collectEmployeeValues(
+    employee.schools,
+    employee.schoolNames,
+    employee.school,
+    employee.schoolName,
+    employee.curriculums,
+    employee.curriculum
+  );
 
-    if (
-        employeeGrades.length > 0 &&
-        requiredGrades.length > 0 &&
-        !hasNormalizedOverlap(employeeGrades, requiredGrades)
-    ) {
-        return false;
-    }
+  if (
+    !hasNormalizedOverlap(
+      employeeSchools,
+      [routing.schoolName]
+    )
+  ) {
+    return false;
+  }
 
-    // Optional school / curriculum restriction.
-    const employeeSchools = collectEmployeeValues(
-        employee.schools,
-        employee.schoolNames,
-        employee.school,
-        employee.schoolName,
-        employee.curriculums,
-        employee.curriculum
-    );
+  // Division must match
+  const employeeDivisions = collectEmployeeValues(
+    employee.divisions,
+    employee.divisionNames,
+    employee.division,
+    employee.divisionName
+  );
 
-    if (
-        employeeSchools.length > 0 &&
-        routing.schoolName &&
-        !hasNormalizedOverlap(employeeSchools, [routing.schoolName])
-    ) {
-        return false;
-    }
+  if (
+    !hasNormalizedOverlap(
+      employeeDivisions,
+      [routing.divisionName]
+    )
+  ) {
+    return false;
+  }
 
-    // Optional division restriction.
-    const employeeDivisions = collectEmployeeValues(
-        employee.divisions,
-        employee.divisionNames,
-        employee.division,
-        employee.divisionName
-    );
+  // Grade must match
+  const employeeGrades = collectEmployeeValues(
+    employee.grades,
+    employee.gradeNames,
+    employee.grade,
+    employee.gradeName
+  );
 
-    if (
-        employeeDivisions.length > 0 &&
-        routing.divisionName &&
-        !hasNormalizedOverlap(employeeDivisions, [routing.divisionName])
-    ) {
-        return false;
-    }
+  if (
+    !hasNormalizedOverlap(
+      employeeGrades,
+      [routing.gradeName]
+    )
+  ) {
+    return false;
+  }
 
-    return true;
+  // Respect mailbox restrictions if configured
+  const employeeMailboxEmails = collectEmployeeValues(
+    employee.mailboxEmails,
+    employee.queueEmails,
+    employee.mailboxes
+  );
+
+  if (
+    employeeMailboxEmails.length > 0 &&
+    !employeeMailboxEmails.some(
+      (email: string) =>
+        email.toLowerCase() === mailbox.email.toLowerCase()
+    )
+  ) {
+    return false;
+  }
+
+  return true;
 }
+
 
 async function extractEmailBody(
     gmail: any,

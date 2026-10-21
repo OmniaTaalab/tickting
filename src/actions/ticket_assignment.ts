@@ -35,8 +35,11 @@ export interface AutoAssignResult {
 }
 
 /**
- * Checks if an employee profile covers a ticket based on campus, school, division, and grade.
- * If employee has specific IDs configured, the ticket must match. If empty, employee covers all.
+ * Strict scope eligibility: category/department is filtered by the caller,
+ * then campus, division, and grade MUST all match by Firestore ID.
+ * Missing/unconfigured values are not wildcards.
+ * If a school is explicitly scoped on the ticket and the agent, preserve
+ * the existing school restriction as an additional safeguard.
  */
 function agentCoversTicket(agent: {
     campusIds?: string[];
@@ -49,36 +52,22 @@ function agentCoversTicket(agent: {
     divisionId?: string | null;
     gradeId?: string | null;
 }): boolean {
-    // 1. Campus check
-    if (ticket.campusId && ticket.campusId !== 'all' && ticket.campusId !== 'N/A') {
-        const agentCampuses = agent.campusIds || [];
-        if (agentCampuses.length > 0 && !agentCampuses.includes(ticket.campusId)) {
-            return false;
-        }
-    }
+    const matchesRequiredScope = (
+        ticketId: string | null | undefined,
+        agentIds: string[] | undefined
+    ): boolean => {
+        if (!ticketId || ticketId === 'all' || ticketId === 'N/A') return false;
+        return Array.isArray(agentIds) && agentIds.includes(ticketId);
+    };
 
-    // 2. School check
+    // AND: Campus AND Division AND Grade (Department is checked by query).
+    if (!matchesRequiredScope(ticket.campusId, agent.campusIds)) return false;
+    if (!matchesRequiredScope(ticket.divisionId, agent.divisionIds)) return false;
+    if (!matchesRequiredScope(ticket.gradeId, agent.gradeIds)) return false;
+
+    // Maintain any explicit school restriction from the existing implementation.
     if (ticket.schoolId && ticket.schoolId !== 'all' && ticket.schoolId !== 'N/A') {
-        const agentSchools = agent.schoolIds || [];
-        if (agentSchools.length > 0 && !agentSchools.includes(ticket.schoolId)) {
-            return false;
-        }
-    }
-
-    // 3. Division check
-    if (ticket.divisionId && ticket.divisionId !== 'all' && ticket.divisionId !== 'N/A') {
-        const agentDivisions = agent.divisionIds || [];
-        if (agentDivisions.length > 0 && !agentDivisions.includes(ticket.divisionId)) {
-            return false;
-        }
-    }
-
-    // 4. Grade check
-    if (ticket.gradeId && ticket.gradeId !== 'all' && ticket.gradeId !== 'N/A') {
-        const agentGrades = agent.gradeIds || [];
-        if (agentGrades.length > 0 && !agentGrades.includes(ticket.gradeId)) {
-            return false;
-        }
+        if (agent.schoolIds?.length && !agent.schoolIds.includes(ticket.schoolId)) return false;
     }
 
     return true;
@@ -178,7 +167,7 @@ export async function getRoundRobinAssignee(
                         name: data.name,
                         email: data.email,
                         avatarUrl: data.avatarUrl,
-                        status: data.status || 'Available',
+                        status: data.status || 'Offline',
                         campusIds: data.campusIds || [],
                         schoolIds: data.schoolIds || [],
                         divisionIds: data.divisionIds || [],
@@ -186,7 +175,7 @@ export async function getRoundRobinAssignee(
                         activeSessionId: data.activeSessionId,
                     };
                 })
-                .filter(emp => emp.status !== 'Busy' && (emp.status === 'Available' || !!emp.activeSessionId))
+                .filter(emp => emp.status === 'Available' && !!emp.activeSessionId)
                 .filter(emp => agentCoversTicket(emp, ticketContext))
                 .sort((a, b) => a.id.localeCompare(b.id));
 
@@ -345,7 +334,7 @@ export async function autoAssignQueuedTickets(options?: {
             name: data.name,
             email: data.email,
             avatarUrl: data.avatarUrl,
-            status: data.status || 'Available',
+            status: data.status || 'Offline',
             campusIds: data.campusIds || [],
             schoolIds: data.schoolIds || [],
             divisionIds: data.divisionIds || [],
@@ -353,7 +342,7 @@ export async function autoAssignQueuedTickets(options?: {
             activeSessionId: data.activeSessionId,
           };
         })
-        .filter(emp => emp.status !== 'Busy' && (emp.status === 'Available' || !!emp.activeSessionId))
+        .filter(emp => emp.status === 'Available' && !!emp.activeSessionId)
         .sort((a, b) => a.id.localeCompare(b.id));
 
       const entry = {

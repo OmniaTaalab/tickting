@@ -137,7 +137,7 @@ FIREBASE_PRIVATE_KEY`
   const projectId =
     process.env.FIREBASE_PROJECT_ID ||
     process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-    'your Firebase project';
+    'studio-7708718228-149dc';
 
   errorMessage =
     `Firebase Authentication error for project "${projectId}". ` +
