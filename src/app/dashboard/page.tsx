@@ -199,12 +199,16 @@ function DashboardPage() {
         return workingHoursElapsed < limitHours;
     }
 
-    const assignedTickets = performanceFilteredTickets.filter(t => !!t.assignedTo);
-    const compliantCount = assignedTickets.filter(t => isTicketSLACompliant(t)).length;
-    const complianceRate = assignedTickets.length > 0 
-      ? Math.round((compliantCount / assignedTickets.length) * 100) 
-      : 100;
-
+   // Exclude Duplicate tickets from all SLA compliance calculations
+const assignedTickets = performanceFilteredTickets.filter(
+  t => !!t.assignedTo && t.status !== 'Duplicate'
+);
+const compliantCount = assignedTickets.filter(
+  t => isTicketSLACompliant(t)
+).length;
+const complianceRate = assignedTickets.length > 0
+  ? Math.round((compliantCount / assignedTickets.length) * 100)
+  : 100;
     const resolvedCount = performanceFilteredTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
     const reopenedCount = performanceFilteredTickets.filter(t => (t.reopenedCount || 0) > 0).length;
 

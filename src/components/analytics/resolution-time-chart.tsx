@@ -58,6 +58,7 @@ export function ResolutionTimeByDivisionChart({ tickets }: ChartProps) {
     const divisionStats: Record<string, { totalHours: number; count: number }> = {};
 
     tickets.forEach(t => {
+        if (t.status === 'Duplicate') return;
       if ((t.status === 'Resolved' || t.status === 'Closed') && t.resolvedAt) {
         const created = toDate(t.createdAt);
         const resolved = toDate(t.resolvedAt);

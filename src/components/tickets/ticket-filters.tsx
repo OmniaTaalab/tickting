@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -32,6 +31,10 @@ interface TicketFiltersProps {
   onFilterChange: (filters: {
     search?: string;
     departmentId?: string;
+    campusId?: string;
+    schoolId?: string;
+    divisionId?: string;
+    gradeId?: string;
     status?: TicketStatus | '';
     channel?: TicketChannel | '';
     sla?: SLAFilterValue;
@@ -40,6 +43,10 @@ interface TicketFiltersProps {
   values: {
     search: string;
     departmentId: string;
+    campusId: string;
+    schoolId: string;
+    divisionId: string;
+    gradeId: string;
     status: TicketStatus | '';
     channel: TicketChannel | '';
     sla: SLAFilterValue;
@@ -47,6 +54,10 @@ interface TicketFiltersProps {
   };
   showDepartmentFilter: boolean;
   departments?: Department[];
+  campuses?: Array<{ id: string; name: string }>;
+  schools?: Array<{ id: string; name: string }>;
+  divisions?: Array<{ id: string; name: string }>;
+  grades?: Array<{ id: string; name: string }>;
   visibleColumns: Record<ColumnId, boolean>;
   onVisibleColumnsChange: React.Dispatch<React.SetStateAction<Record<ColumnId, boolean>>>;
   data: Ticket[];
@@ -101,7 +112,11 @@ export function TicketFilters({
   onFilterChange, 
   showDepartmentFilter, 
   values,
-  departments = [], 
+  departments = [],
+  campuses = [],
+  schools = [],
+  divisions = [],
+  grades = [],
   visibleColumns, 
   onVisibleColumnsChange,
   data,
@@ -192,6 +207,10 @@ export function TicketFilters({
     localSearch ||
     values.search ||
     values.departmentId ||
+    values.campusId ||
+    values.schoolId ||
+    values.divisionId ||
+    values.gradeId ||
     values.status ||
     values.channel ||
     (values.sla && values.sla !== 'all') ||
@@ -209,6 +228,10 @@ export function TicketFilters({
     onFilterChange({
       search: '',
       departmentId: '',
+      campusId: '',
+      schoolId: '',
+      divisionId: '',
+      gradeId: '',
       status: '',
       channel: '',
       sla: 'all',
@@ -355,6 +378,29 @@ export function TicketFilters({
               </SelectContent>
             </Select>
           )}
+
+           {([
+             { key: 'campusId', label: 'Campus', options: campuses },
+             { key: 'schoolId', label: 'School', options: schools },
+             { key: 'divisionId', label: 'Division', options: divisions },
+             { key: 'gradeId', label: 'Grade', options: grades },
+           ] as const).map(({ key, label, options }) => (
+             <Select
+               key={key}
+               value={values[key] || 'all'}
+               onValueChange={value => onFilterChange({ [key]: value === 'all' ? '' : value } as Parameters<TicketFiltersProps['onFilterChange']>[0])}
+             >
+               <SelectTrigger className="w-full sm:w-[145px] bg-white h-10 border-slate-200 rounded-xl shadow-sm font-bold text-xs">
+                 <SelectValue placeholder={label} />
+               </SelectTrigger>
+               <SelectContent>
+                 <SelectItem value="all">All {label}s</SelectItem>
+                 {[...options].sort((a, b) => a.name.localeCompare(b.name)).map(option => (
+                   <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>
+                 ))}
+               </SelectContent>
+             </Select>
+           ))}
 
           <Button 
             variant="outline" 

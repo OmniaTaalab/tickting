@@ -56,6 +56,8 @@ export function DivisionHealthCards({ tickets, performanceTickets }: DivisionHea
       const resolvedCount = divisionPerfTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
       
       const breachedCount = divisionTickets.filter(t => {
+        // Exclude Duplicate tickets from SLA breaches
+if (t.status === 'Duplicate') return false;
         // SLA requirements: stop at resolution, closure, or response
         const isFinished = ['Resolved', 'Closed'].includes(t.status);
         const finishedAt = isFinished ? toDate(t.resolvedAt || t.closedAt) : null;
@@ -94,6 +96,8 @@ export function DivisionHealthCards({ tickets, performanceTickets }: DivisionHea
       const resolvedCount = uncategorizedPerfTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
       
       const breachedCount = uncategorizedTickets.filter(t => {
+        // Exclude Duplicate tickets from SLA breaches
+if (t.status === 'Duplicate') return false;
         const isFinished = ['Resolved', 'Closed'].includes(t.status);
         const finishedAt = isFinished ? toDate(t.resolvedAt || t.closedAt) : null;
         const responded = toDate(t.firstRespondedAt);

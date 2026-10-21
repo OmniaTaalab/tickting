@@ -834,7 +834,8 @@ export default function TicketDetailPage() {
 
   const slaInfo = useMemo(() => {
     if (!ticket || !slaSettings || !departments) return null;
-    
+    // Duplicate tickets are excluded from SLA
+if (ticket.status === 'Duplicate') return null;
     const start = toDate(ticket.assignedAt || ticket.createdAt);
     const responded = toDate(ticket.firstRespondedAt);
     const isFinished = ['Resolved', 'Closed'].includes(ticket.status);

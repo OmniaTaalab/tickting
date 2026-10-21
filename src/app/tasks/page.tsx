@@ -74,14 +74,21 @@ function TaskRow({ ticket, slaSettings, now, departments }: { ticket: Ticket; sl
     const priority = ticket.priority || 'Normal';
     const policy = slaSettings[channelKey] || slaSettings['Email'];
     const limitHours = policy?.[priority] || 24;
-    
     const isBreached = useMemo(() => {
-        if (!start || !ticket.assignedTo) return false;
-        const compareTime = finishedAt || responded || now;
-        const workingHoursElapsed = calculateWorkingHoursElapsed(start, compareTime, dept?.workingHours);
-        return workingHoursElapsed >= limitHours;
-    }, [start, responded, finishedAt, now, limitHours, dept, ticket.assignedTo]);
+    // Duplicate tickets are excluded from SLA
+    if (ticket.status === 'Duplicate') return false;
 
+    if (!start || !ticket.assignedTo) return false;
+
+    const compareTime = finishedAt || responded || now;
+    const workingHoursElapsed = calculateWorkingHoursElapsed(
+        start,
+        compareTime,
+        dept?.workingHours
+    );
+
+    return workingHoursElapsed >= limitHours;
+}, [start, responded, finishedAt, now, limitHours, dept, ticket.assignedTo, ticket.status]);
     return (
         <div 
             onClick={() => router.push(`/tickets/${ticket.id}`)}
@@ -209,6 +216,8 @@ export default function TasksPage() {
         // SLA breached only
         if (slaBreachedOnly) {
             result = result.filter(t => {
+                // Duplicate tickets must not be counted as SLA breached
+if (t.status === 'Duplicate') return false;
                 const start = toDate(t.assignedAt || t.createdAt);
                 if (!start || !t.assignedTo) return false;
                 

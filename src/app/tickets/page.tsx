@@ -1,4 +1,3 @@
-
 'use client';
 import { useState, useMemo, useEffect, useTransition, useCallback, memo, Suspense, useRef } from 'react';
 import {
@@ -50,6 +49,10 @@ const TICKETS_COLUMNS_STORAGE_KEY = 'nis_tickets_visible_columns_v2';
 const defaultFilters = {
   search: '',
   departmentId: '',
+  campusId: '',
+  schoolId: '',
+  divisionId: '',
+  gradeId: '',
   status: '' as TicketStatus | '',
   channel: '' as TicketChannel | '',
   sla: 'all' as SLAFilterValue,
@@ -66,6 +69,10 @@ function readStoredFilters(slaParam: SLAFilterValue | null) {
     const urlParams = new URLSearchParams(window.location.search);
     const qSearch = urlParams.get('search');
     const qDept = urlParams.get('category') || urlParams.get('departmentId');
+    const qCampus = urlParams.get('campus');
+    const qSchool = urlParams.get('school');
+    const qDivision = urlParams.get('division');
+    const qGrade = urlParams.get('grade');
     const qStatus = urlParams.get('status');
     const qChannel = urlParams.get('channel');
     const qSla = urlParams.get('sla');
@@ -83,6 +90,10 @@ function readStoredFilters(slaParam: SLAFilterValue | null) {
 
     const searchVal = qSearch !== null ? qSearch : (typeof parsed?.search === 'string' ? parsed.search : '');
     const deptVal = qDept !== null ? qDept : (typeof parsed?.departmentId === 'string' ? parsed.departmentId : '');
+    const campusVal = qCampus !== null ? qCampus : (typeof parsed?.campusId === 'string' ? parsed.campusId : '');
+    const schoolVal = qSchool !== null ? qSchool : (typeof parsed?.schoolId === 'string' ? parsed.schoolId : '');
+    const divisionVal = qDivision !== null ? qDivision : (typeof parsed?.divisionId === 'string' ? parsed.divisionId : '');
+    const gradeVal = qGrade !== null ? qGrade : (typeof parsed?.gradeId === 'string' ? parsed.gradeId : '');
     const statusVal = qStatus !== null ? qStatus : (typeof parsed?.status === 'string' ? parsed.status : '');
     const channelVal = qChannel !== null ? qChannel : (typeof parsed?.channel === 'string' ? parsed.channel : '');
     const slaVal = (qSla as SLAFilterValue) || slaParam || (parsed?.sla as SLAFilterValue) || 'all';
@@ -111,6 +122,10 @@ function readStoredFilters(slaParam: SLAFilterValue | null) {
     return {
       search: searchVal,
       departmentId: deptVal,
+      campusId: campusVal,
+      schoolId: schoolVal,
+      divisionId: divisionVal,
+      gradeId: gradeVal,
       status: (statusVal || '') as TicketStatus | '',
       channel: (channelVal || '') as TicketChannel | '',
       sla: slaVal,
@@ -206,6 +221,10 @@ function TicketsContent() {
       const dataToSave = JSON.stringify({
         search: filters.search,
         departmentId: filters.departmentId,
+        campusId: filters.campusId,
+        schoolId: filters.schoolId,
+        divisionId: filters.divisionId,
+        gradeId: filters.gradeId,
         status: filters.status,
         channel: filters.channel,
         sla: filters.sla,
@@ -220,6 +239,10 @@ function TicketsContent() {
         const params = new URLSearchParams();
         if (filters.search) params.set('search', filters.search);
         if (filters.departmentId) params.set('category', filters.departmentId);
+        if (filters.campusId) params.set('campus', filters.campusId);
+        if (filters.schoolId) params.set('school', filters.schoolId);
+        if (filters.divisionId) params.set('division', filters.divisionId);
+        if (filters.gradeId) params.set('grade', filters.gradeId);
         if (filters.status) params.set('status', filters.status);
         if (filters.channel) params.set('channel', filters.channel);
         if (filters.sla && filters.sla !== 'all') params.set('sla', filters.sla);
@@ -312,6 +335,28 @@ function TicketsContent() {
   );
   const { data: allDepartments, isLoading: areDepartmentsLoading } = useCollection<Department>(departmentsQuery);
 
+  // Read catalog documents to match both ID-based and legacy name-based tickets.
+  const campusesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'campuses')) : null, [firestore]);
+  const schoolsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'schools')) : null, [firestore]);
+  const divisionsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'divisions')) : null, [firestore]);
+  const gradesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'grades')) : null, [firestore]);
+  type ScopeOption = { id: string; name: string };
+  const { data: campuses } = useCollection<ScopeOption>(campusesQuery);
+  const { data: schools } = useCollection<ScopeOption>(schoolsQuery);
+  const { data: divisions } = useCollection<ScopeOption>(divisionsQuery);
+  const { data: grades } = useCollection<ScopeOption>(gradesQuery);
+
+  const normalizeScope = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const matchesScope = (ticketValues: unknown[], selectedId: string, options: ScopeOption[] | null | undefined) => {
+    if (!selectedId) return true;
+    const selected = options?.find(option => option.id === selectedId);
+    const accepted = [selectedId, selected?.name].filter(Boolean).map(normalizeScope);
+    return ticketValues.some(value => {
+      if (Array.isArray(value)) return value.some(item => accepted.includes(normalizeScope(item)));
+      return accepted.includes(normalizeScope(value));
+    });
+  };
+
   const ticketsQuery = useMemoFirebase(() => {
     if (!firestore || isProfileLoading || !user || !userProfile) return null;
     return query(collection(firestore, 'tickets'));
@@ -388,6 +433,22 @@ function TicketsContent() {
     if (filters.departmentId) {
         result = result.filter(t => t.departmentId === filters.departmentId);
     }
+    if (filters.campusId || filters.schoolId || filters.divisionId || filters.gradeId) {
+      result = result.filter(t => {
+        // Email tickets may store names / mailbox routing options, instead of IDs.
+        const record = t as Ticket & {
+          campusName?: string; school?: string; schoolName?: string; schoolNames?: string[];
+          division?: string; divisionName?: string; divisionNames?: string[];
+          grade?: string; gradeName?: string; grades?: string[]; allowedGrades?: string[];
+          routingOptions?: Array<{ school?: string; division?: string; grades?: string[] }>;
+        };
+        const routes = record.routingOptions || [];
+        return matchesScope([record.campusId, record.campusName], filters.campusId, campuses)
+          && matchesScope([record.schoolId, record.school, record.schoolName, record.schoolNames, routes.map(r => r.school)], filters.schoolId, schools)
+          && matchesScope([record.divisionId, record.division, record.divisionName, record.divisionNames, routes.map(r => r.division)], filters.divisionId, divisions)
+          && matchesScope([record.gradeId, record.grade, record.gradeName, record.grades, record.allowedGrades, routes.flatMap(r => r.grades || [])], filters.gradeId, grades);
+      });
+    }
     if (filters.channel) {
       const filterChannel = filters.channel.toLowerCase();
       result = result.filter(t => {
@@ -441,15 +502,22 @@ function TicketsContent() {
         const compareTime = finishedAt || responded || now;
         const workingHoursElapsed = calculateWorkingHoursElapsed(start, compareTime, dept?.workingHours);
 
-        if (filters.sla === 'breached') {
-            return workingHoursElapsed >= limitHours;
-        }
-        if (filters.sla === 'at-risk') {
-            if (finishedAt || responded) return false;
-            const hoursRemaining = limitHours - workingHoursElapsed;
-            return hoursRemaining > 0 && hoursRemaining <= 2;
-        }
-        return true;
+      // Duplicate tickets are excluded from SLA filters
+if (t.status === 'Duplicate') {
+    return false;
+}
+
+if (filters.sla === 'breached') {
+    return workingHoursElapsed >= limitHours;
+}
+
+if (filters.sla === 'at-risk') {
+    if (finishedAt || responded) return false;
+    const hoursRemaining = limitHours - workingHoursElapsed;
+    return hoursRemaining > 0 && hoursRemaining <= 2;
+}
+
+return true;
       });
     }
     return result;
@@ -585,6 +653,10 @@ function TicketsContent() {
         ) : (
           <MemoizedTicketFilters
             departments={departmentsForFilter.length > 0 ? departmentsForFilter : (allDepartments || [])}
+            campuses={campuses || []}
+            schools={schools || []}
+            divisions={divisions || []}
+            grades={grades || []}
             showDepartmentFilter={true}
             values={filters}
             onFilterChange={handleFilterChange}

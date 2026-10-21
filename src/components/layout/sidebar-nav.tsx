@@ -126,6 +126,8 @@ export function SidebarNav() {
     
     // SLA breaches: iterate over relevant tickets (Personal for staff, Dept+Campus for manager, All for admin)
     const slaBreaches = relevantActiveTickets.filter(t => {
+        if (t.status === 'Duplicate') return false;
+
       const start = toDate(t.assignedAt || t.createdAt);
       if (!start) return false;
       

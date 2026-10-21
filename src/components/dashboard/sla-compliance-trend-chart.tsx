@@ -113,8 +113,10 @@ export function SLAComplianceTrendChart({ tickets, dateRange }: ChartProps) {
       });
 
       // Filter to only tickets that are assigned (eligible for SLA)
-      const assignedDayTickets = dayTickets.filter(t => !!t.assignedTo);
-
+// Exclude Duplicate tickets from SLA compliance calculations
+const assignedDayTickets = dayTickets.filter(
+  t => !!t.assignedTo && t.status !== 'Duplicate'
+);
       if (assignedDayTickets.length === 0) {
         data.push({
           day: format(day, 'MMM dd'),
