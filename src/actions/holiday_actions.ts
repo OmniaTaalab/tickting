@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { logSystemEvent } from '@/lib/system-log';
 import type { OfficialHoliday } from '@/lib/types';
 import { getCairoDateString } from '@/lib/working-hours-utils';
+import { DayButton } from 'react-day-picker';
 
 export interface SaveHolidayResult {
   success: boolean;
@@ -29,7 +30,16 @@ export async function saveOfficialHoliday(
   actor?: { userId: string; name: string }
 ): Promise<SaveHolidayResult> {
   try {
+      const db = adminDb;
+
+    if (!db) {
+      return {
+        success: false,
+        message: 'Firebase Admin database is not initialized.',
+      };
+    }
     const name = data.name?.trim();
+
     const date = data.date?.trim();
     const emailSubject = data.emailSubject?.trim();
     const emailBody = data.emailBody?.trim();
@@ -53,7 +63,7 @@ export async function saveOfficialHoliday(
 
     // Check for duplicate active holidays on the same date
     if (isActive) {
-      const existingSnap = await adminDb
+      const existingSnap = await db
         .collection('official_holidays')
         .where('date', '==', date)
         .where('isActive', '==', true)
@@ -81,7 +91,7 @@ export async function saveOfficialHoliday(
     let holidayId = data.id;
 
     if (holidayId) {
-      await adminDb.collection('official_holidays').doc(holidayId).update(payload);
+      await db.collection('official_holidays').doc(holidayId).update(payload);
 
       await logSystemEvent({
         eventType: 'OFFICIAL_HOLIDAY_UPDATED',
@@ -90,7 +100,7 @@ export async function saveOfficialHoliday(
         details: { holidayId, name, date, isActive },
       });
     } else {
-      const newDocRef = await adminDb.collection('official_holidays').add({
+      const newDocRef = await db.collection('official_holidays').add({
         ...payload,
         createdAt: FieldValue.serverTimestamp(),
       });
@@ -123,8 +133,17 @@ export async function deleteOfficialHoliday(
   actor?: { userId: string; name: string }
 ): Promise<{ success: boolean; message?: string }> {
   try {
-    const docRef = adminDb.collection('official_holidays').doc(id);
-    const snap = await docRef.get();
+  const db = adminDb;
+
+    if (!db) {
+      return {
+        success: false,
+        message: 'Firebase Admin database is not initialized.',
+      };
+    }
+
+    const docRef = db.collection('official_holidays').doc(id);
+        const snap = await docRef.get();
     const data = snap.data();
 
     await docRef.delete();
@@ -156,8 +175,18 @@ export async function toggleOfficialHolidayStatus(
   actor?: { userId: string; name: string }
 ): Promise<{ success: boolean; message?: string }> {
   try {
-    const docRef = adminDb.collection('official_holidays').doc(id);
-    const snap = await docRef.get();
+
+    const db = adminDb;
+
+    if (!db) {
+      return {
+        success: false,
+        message: 'Firebase Admin database is not initialized.',
+      };
+    }
+
+    const docRef = db.collection('official_holidays').doc(id);
+        const snap = await docRef.get();
     if (!snap.exists) {
       return { success: false, message: 'Holiday not found.' };
     }
@@ -165,8 +194,7 @@ export async function toggleOfficialHolidayStatus(
 
     if (isActive) {
       // Check for duplicate active holidays on the same date
-      const existingSnap = await adminDb
-        .collection('official_holidays')
+      const existingSnap = await db.collection('official_holidays')
         .where('date', '==', data.date)
         .where('isActive', '==', true)
         .get();
@@ -208,9 +236,19 @@ export async function toggleOfficialHolidayStatus(
  * Fetches all official holidays securely via Server Action.
  */
 export async function getOfficialHolidaysAction(): Promise<{ success: boolean; holidays?: OfficialHoliday[]; message?: string }> {
+
   try {
-    const snapshot = await adminDb.collection('official_holidays').orderBy('date', 'desc').get();
-    const holidays = snapshot.docs.map(doc => {
+    const db = adminDb;
+
+    if (!db) {
+      return {
+        success: false,
+        message: 'Firebase Admin database is not initialized.',
+      };
+    }
+
+    const snapshot = await db.collection('official_holidays').orderBy('date', 'desc').get();
+        const holidays = snapshot.docs.map(doc => {
       const data = doc.data();
       return {
         id: doc.id,

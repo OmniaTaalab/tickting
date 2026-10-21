@@ -26,7 +26,7 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Zap, Loader2 } 
 import { useLanguage } from '@/hooks/use-language';
 import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 import { useToast } from '@/hooks/use-toast';
-import { assignQueuedTicketsAction } from '@/actions/ticket_assignment';
+import { autoAssignQueuedTickets } from '@/actions/ticket_assignment';
 import { fixDuplicateTicketNumbersAction } from '@/actions/ticket_deduplicate';
 
 
@@ -271,7 +271,7 @@ function TicketsContent() {
       });
       try {
         const deptId = userProfile?.role === 'Manager' ? userProfile?.departmentId : undefined;
-        const res = await assignQueuedTicketsAction(deptId);
+        const res = await autoAssignQueuedTickets({ departmentId: deptId });
         if (res.success && res.assignedCount > 0) {
           const names = res.assignments.map(a => `#${a.ticketNumber || a.ticketId.slice(0, 4)} → ${a.assigneeName}`).join(', ');
           toast({
@@ -478,7 +478,7 @@ function TicketsContent() {
       if (nowMs - lastAutoAssignRef.current > 30000) {
         lastAutoAssignRef.current = nowMs;
         const deptId = userProfile?.role === 'Manager' ? userProfile?.departmentId : undefined;
-        assignQueuedTicketsAction(deptId)
+        autoAssignQueuedTickets({ departmentId: deptId })
           .then(res => {
             if (res.success && res.assignedCount > 0) {
               const names = res.assignments.map(a => `#${a.ticketNumber || a.ticketId.slice(0, 4)} → ${a.assigneeName}`).join(', ');

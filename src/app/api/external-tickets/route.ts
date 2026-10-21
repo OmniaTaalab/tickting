@@ -65,13 +65,13 @@ export async function POST(req: NextRequest) {
         let finalStatus = externalStatus || 'Queue';
 
         if (isNowWorking) {
-            assignedUser = await getRoundRobinAssignee({
-                departmentId,
-                campusId: campus?.id,
-                schoolId: school?.id,
-                divisionId,
-                gradeId,
-            });
+           assignedUser = await getRoundRobinAssignee({
+    departmentId,
+    campusId: campus?.id,
+    schoolId: school?.id,
+    divisionId: division?.id ?? null,
+    gradeId: grade?.id ?? null,
+});
             if (assignedUser) {
                 finalStatus = externalStatus || 'Open';
             }
