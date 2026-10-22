@@ -43,7 +43,10 @@ export function ResolutionTimeByDivisionChart({ tickets }: ChartProps) {
   const { t, language } = useLanguage();
   const isRTL = language === 'ar';
 
-  const deptsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
+  const deptsQuery = useMemoFirebase(() =>
+    firestore ? query(collection(firestore, 'departments')) : null,
+    [firestore]
+  );
   const { data: departments, isLoading: areDeptsLoading } = useCollection<Department>(deptsQuery);
 
   const chartConfig = {
@@ -57,18 +60,20 @@ export function ResolutionTimeByDivisionChart({ tickets }: ChartProps) {
     if (!departments) return [];
     const divisionStats: Record<string, { totalHours: number; count: number }> = {};
 
-    tickets.forEach(t => {
-        if (t.status === 'Duplicate') return;
-      if ((t.status === 'Resolved' || t.status === 'Closed') && t.resolvedAt) {
-        const created = toDate(t.createdAt);
-        const resolved = toDate(t.resolvedAt);
-        const division = t.divisionName || 'General';
+    tickets.forEach(ticket => {
+      // Ignored and Duplicate tickets never contribute to resolution-time metrics.
+      if (ticket.status === 'Ignored' || ticket.status === 'Duplicate') return;
+
+      // Only completed tickets with a recorded resolution timestamp are counted.
+      if ((ticket.status === 'Resolved' || ticket.status === 'Closed') && ticket.resolvedAt) {
+        const created = toDate(ticket.createdAt);
+        const resolved = toDate(ticket.resolvedAt);
+        const division = ticket.divisionName || 'General';
 
         if (created && resolved) {
-          const dept = departments.find(d => d.id === t.departmentId);
-          // USE WORKING HOURS ELAPSED INSTEAD OF WALL CLOCK
+          const dept = departments.find(d => d.id === ticket.departmentId);
           const hours = calculateWorkingHoursElapsed(created, resolved, dept?.workingHours);
-          
+
           if (!divisionStats[division]) {
             divisionStats[division] = { totalHours: 0, count: 0 };
           }
@@ -80,18 +85,18 @@ export function ResolutionTimeByDivisionChart({ tickets }: ChartProps) {
 
     return Object.entries(divisionStats)
       .map(([division, stats]) => ({
-        division: division,
+        division,
         hours: Math.round(stats.totalHours / stats.count),
       }))
       .sort((a, b) => b.hours - a.hours);
   }, [tickets, departments]);
 
   if (areDeptsLoading) {
-      return (
-          <Card className="border-none shadow-sm bg-white h-full flex items-center justify-center">
-              <Loader2 className="h-6 w-6 animate-spin text-slate-300" />
-          </Card>
-      );
+    return (
+      <Card className="border-none shadow-sm bg-white h-full flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-slate-300" />
+      </Card>
+    );
   }
 
   return (
@@ -102,47 +107,47 @@ export function ResolutionTimeByDivisionChart({ tickets }: ChartProps) {
       </CardHeader>
       <CardContent className="p-5 flex-1 flex flex-col justify-center min-h-[300px]">
         {chartData.length > 0 ? (
-            <ChartContainer config={chartConfig} className="h-[300px] w-full">
+          <ChartContainer config={chartConfig} className="h-[300px] w-full">
             <BarChart
-                data={chartData}
-                layout="vertical"
-                margin={{ 
-                    top: 5, 
-                    right: isRTL ? 40 : 40, 
-                    left: isRTL ? 40 : 40, 
-                    bottom: 5 
-                }}
-                barSize={12}
+              data={chartData}
+              layout="vertical"
+              margin={{
+                top: 5,
+                right: isRTL ? 40 : 40,
+                left: isRTL ? 40 : 40,
+                bottom: 5,
+              }}
+              barSize={12}
             >
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.05} />
-                <XAxis type="number" hide />
-                <YAxis
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} opacity={0.05} />
+              <XAxis type="number" hide />
+              <YAxis
                 dataKey="division"
                 type="category"
                 axisLine={false}
                 tickLine={false}
                 fontSize={10}
                 width={80}
-                orientation={isRTL ? "right" : "left"}
+                orientation={isRTL ? 'right' : 'left'}
                 tick={{ fill: 'hsl(var(--muted-foreground))', fontWeight: 600 }}
+              />
+              <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+              <Bar dataKey="hours" fill={chartConfig.hours.color} radius={[2, 2, 2, 2]}>
+                <LabelList
+                  dataKey="hours"
+                  position={isRTL ? 'left' : 'right'}
+                  offset={10}
+                  formatter={(val: number) => `${val}h`}
+                  className="fill-slate-500 font-bold text-[10px]"
                 />
-                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                <Bar dataKey="hours" fill={chartConfig.hours.color} radius={[2, 2, 2, 2]}>
-                    <LabelList 
-                        dataKey="hours" 
-                        position={isRTL ? "left" : "right"} 
-                        offset={10}
-                        formatter={(val: number) => `${val}h`}
-                        className="fill-slate-500 font-bold text-[10px]"
-                    />
-                </Bar>
+              </Bar>
             </BarChart>
-            </ChartContainer>
+          </ChartContainer>
         ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-                <BarChart3 className="h-10 w-10 text-slate-200 mb-2" />
-                <p className="text-sm font-bold text-slate-400 max-w-[200px]">{t('noResolvedTickets')}</p>
-            </div>
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <BarChart3 className="h-10 w-10 text-slate-200 mb-2" />
+            <p className="text-sm font-bold text-slate-400 max-w-[200px]">{t('noResolvedTickets')}</p>
+          </div>
         )}
       </CardContent>
     </Card>

@@ -163,6 +163,7 @@ export function TicketActionsToolbar({
               <SelectItem value="Resolved">{t('resolved')}</SelectItem>
               <SelectItem value="Queue">{t('queue')}</SelectItem>
               <SelectItem value="Duplicate">{t('duplicate')}</SelectItem>
+              <SelectItem value="Ignored">{t('ignored') || 'Ignored'}</SelectItem>
             </SelectContent>
           </Select>
 

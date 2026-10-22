@@ -14,11 +14,21 @@ interface ChartProps {
   tickets: Ticket[];
 }
 
-// Order of statuses for display consistency in legend and chart
-const STATUS_ORDER: TicketStatus[] = ['Open', 'Queue', 'Waiting', 'In Progress', 'Resolved', 'Closed', 'Duplicate'];
+// Order of statuses for display consistency in legend and chart.
+const STATUS_ORDER: TicketStatus[] = [
+  'Open',
+  'Queue',
+  'Waiting',
+  'In Progress',
+  'Resolved',
+  'Closed',
+  'Duplicate',
+  'Ignored',
+];
 
 export function TicketsByStatusChart({ tickets }: ChartProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+
   const statusCounts = useMemo(
     () =>
       tickets.reduce((acc, ticket) => {
@@ -29,7 +39,7 @@ export function TicketsByStatusChart({ tickets }: ChartProps) {
     [tickets]
   );
 
-  const totalTickets = useMemo(() => tickets.length, [tickets]);
+  const totalTickets = tickets.length;
 
   const chartData = useMemo(
     () =>
@@ -40,22 +50,34 @@ export function TicketsByStatusChart({ tickets }: ChartProps) {
     [statusCounts]
   );
 
+  const ignoredTranslation = t('ignored');
+  const ignoredLabel = ignoredTranslation === 'ignored'
+    ? (language === 'ar' ? 'متجاهلة' : 'Ignored')
+    : ignoredTranslation;
+
   const chartConfig = {
-      open: { label: t('open'), color: '#3B82F6' },
-      queue: { label: t('queue'), color: '#8b5cf6' },
-      waiting: { label: t('waiting'), color: '#6366f1' },
-      inprogress: { label: t('inProgress'), color: '#f59e0b' },
-      resolved: { label: t('resolved'), color: '#10b981' },
-      closed: { label: t('closed'), color: '#ef4444' },
-      duplicate: { label: t('duplicate'), color: '#94a3b8' },
-    };
-    
+    open: { label: t('open'), color: '#3B82F6' },
+    queue: { label: t('queue'), color: '#8b5cf6' },
+    waiting: { label: t('waiting'), color: '#6366f1' },
+    inprogress: { label: t('inProgress'), color: '#f59e0b' },
+    resolved: { label: t('resolved'), color: '#10b981' },
+    closed: { label: t('closed'), color: '#ef4444' },
+    duplicate: { label: t('duplicate'), color: '#94a3b8' },
+    ignored: { label: ignoredLabel, color: '#64748b' },
+  };
+
+  const statusLabel = (status: TicketStatus) => {
+    if (status === 'Ignored') return ignoredLabel;
+    if (status === 'In Progress') return t('inProgress');
+    const key = status.toLowerCase() as 'open' | 'queue' | 'waiting' | 'resolved' | 'closed' | 'duplicate';
+    return t(key);
+  };
 
   return (
     <div className="grid h-full grid-cols-2 items-center gap-4">
       <div className="relative flex h-full items-center justify-center">
         <ChartContainer
-          config={chartConfig as any}
+          config={chartConfig}
           className="mx-auto aspect-square h-full w-full"
         >
           <PieChart>
@@ -73,11 +95,11 @@ export function TicketsByStatusChart({ tickets }: ChartProps) {
               {chartData.map(entry => {
                 const key = entry.name.toLowerCase().replace(/ /g, '') as keyof typeof chartConfig;
                 return (
-                    <Cell
-                        key={entry.name}
-                        fill={chartConfig[key]?.color || '#cbd5e1'}
-                    />
-                )
+                  <Cell
+                    key={entry.name}
+                    fill={chartConfig[key]?.color || '#cbd5e1'}
+                  />
+                );
               })}
             </Pie>
           </PieChart>
@@ -89,19 +111,19 @@ export function TicketsByStatusChart({ tickets }: ChartProps) {
       </div>
       <div className="flex flex-col gap-1.5 text-[11px] text-start">
         {chartData.map(item => {
-           const key = item.name.toLowerCase().replace(/ /g, '') as keyof typeof chartConfig;
-           return (
+          const key = item.name.toLowerCase().replace(/ /g, '') as keyof typeof chartConfig;
+          return (
             <div key={item.name} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
                 <div
-                    className="h-2 w-2 rounded-full"
-                    style={{ backgroundColor: chartConfig[key]?.color || '#cbd5e1' }}
+                  className="h-2 w-2 rounded-full"
+                  style={{ backgroundColor: chartConfig[key]?.color || '#cbd5e1' }}
                 />
-                <span className="text-slate-600 font-medium">{t(item.name)}</span>
-                </div>
-                <span className="font-bold text-slate-900">{item.total}</span>
+                <span className="text-slate-600 font-medium">{statusLabel(item.name)}</span>
+              </div>
+              <span className="font-bold text-slate-900">{item.total}</span>
             </div>
-           )
+          );
         })}
       </div>
     </div>

@@ -130,14 +130,22 @@ function ChannelBadge({ channel }: { channel: string }) {
 
 function SlaStatusBadge({ ticket, slaSettings, departments }: { ticket: Ticket; slaSettings: SLASettings; departments: Department[] }) {
   const { t } = useLanguage();
-  // Duplicate tickets are excluded from SLA
-if (ticket.status === 'Duplicate') {
-  return (
-    <span className="text-slate-400 font-bold text-[12px]">
-      N/A
-    </span>
-  );
-}
+  // Excluded statuses do not participate in SLA calculations.
+  if (ticket.status === 'Ignored') {
+    return (
+      <span className="text-slate-500 font-bold text-[12px] uppercase tracking-tight">
+        SLA Excluded
+      </span>
+    );
+  }
+
+  if (ticket.status === 'Duplicate') {
+    return (
+      <span className="text-slate-400 font-bold text-[12px]">
+        N/A
+      </span>
+    );
+  }
   const now = new Date();
   
   // Start from assignedAt for tech-SLA

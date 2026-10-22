@@ -19,7 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { subDays, startOfDay, isSameDay, format, endOfDay, eachDayOfInterval } from 'date-fns';
 import { Timestamp, doc, collection, query } from 'firebase/firestore';
 import { useDoc, useFirebase, useMemoFirebase, useCollection } from '@/firebase';
-import { DateRange } from "react-day-picker";
+import type { DateRange } from 'react-day-picker';
 import { useLanguage } from '@/hooks/use-language';
 import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 
@@ -34,9 +34,24 @@ const toDate = (timestamp: Timestamp | string | undefined): Date | null => {
   try {
     const d = new Date(timestamp);
     return isNaN(d.getTime()) ? null : d;
-  } catch (e) {
+  } catch {
     return null;
   }
+};
+
+const isSLAExcluded = (ticket: Ticket): boolean =>
+  ticket.status === 'Duplicate' || ticket.status === 'Ignored';
+
+// Use the same channel mapping as the ticket list and dashboard.
+const getSLAChannel = (channel: string | undefined): TicketChannel => {
+  const value = (channel || 'Email').toLowerCase();
+  if (value.includes('social')) return 'Social Media';
+  if (value.includes('walk')) return 'Walk-in';
+  if (value === 'website' || value === 'api' || value === 'web') return 'Web';
+  if (value === 'whatsapp') return 'WhatsApp';
+  if (value === 'form') return 'Form';
+  if (value === 'phone') return 'Phone';
+  return 'Email';
 };
 
 function CustomXAxisTick(props: any) {
@@ -73,7 +88,7 @@ function CustomXAxisTick(props: any) {
 export function SLAComplianceTrendChart({ tickets, dateRange }: ChartProps) {
   const { firestore } = useFirebase();
   const { t } = useLanguage();
-  
+
   const slaRef = useMemoFirebase(() => (firestore ? doc(firestore, 'settings', 'sla') : null), [firestore]);
   const { data: savedSLA } = useDoc<SLASettings>(slaRef);
   const slaSettings = savedSLA || DEFAULT_SLA_SETTINGS;
@@ -90,54 +105,58 @@ export function SLAComplianceTrendChart({ tickets, dateRange }: ChartProps) {
 
   const chartData = useMemo(() => {
     if (!departments) return [];
-    const data: Array<{ day: string; fullDate: string; compliance: number }> = [];
+
+    const data: Array<{ day: string; fullDate: string; compliance: number | null }> = [];
     const now = new Date();
 
     let startRange: Date;
     let endRange: Date;
 
     if (dateRange?.from) {
-        startRange = startOfDay(dateRange.from);
-        endRange = dateRange.to ? endOfDay(dateRange.to) : endOfDay(dateRange.from);
+      startRange = startOfDay(dateRange.from);
+      endRange = dateRange.to ? endOfDay(dateRange.to) : endOfDay(dateRange.from);
     } else {
-        startRange = startOfDay(subDays(now, 13));
-        endRange = endOfDay(now);
+      startRange = startOfDay(subDays(now, 13));
+      endRange = endOfDay(now);
     }
 
     const intervalDays = eachDayOfInterval({ start: startRange, end: endRange });
 
     intervalDays.forEach((day) => {
-      const dayTickets = tickets.filter(t => {
-        const created = toDate(t.createdAt);
-        return created && isSameDay(created, day);
+      // Tickets remain present in the other dashboard charts, but not in SLA calculations.
+      const eligibleDayTickets = tickets.filter(ticket => {
+        const created = toDate(ticket.createdAt);
+        return Boolean(
+          created &&
+          isSameDay(created, day) &&
+          ticket.assignedTo &&
+          !isSLAExcluded(ticket) &&
+          toDate(ticket.assignedAt || ticket.createdAt)
+        );
       });
 
-      // Filter to only tickets that are assigned (eligible for SLA)
-// Exclude Duplicate tickets from SLA compliance calculations
-const assignedDayTickets = dayTickets.filter(
-  t => !!t.assignedTo && t.status !== 'Duplicate'
-);
-      if (assignedDayTickets.length === 0) {
+      if (eligibleDayTickets.length === 0) {
+        // No eligible tickets is "no data", not 100% compliance.
         data.push({
           day: format(day, 'MMM dd'),
           fullDate: format(day, 'EEE'),
-          compliance: 100,
+          compliance: null,
         });
         return;
       }
 
-      const compliantCount = assignedDayTickets.filter(t => {
-        const startPoint = toDate(t.assignedAt || t.createdAt);
-        const responded = toDate(t.firstRespondedAt);
-        const isFinished = ['Resolved', 'Closed'].includes(t.status);
-        const finishedAt = isFinished ? toDate(t.resolvedAt || t.closedAt) : null;
+      const compliantCount = eligibleDayTickets.filter(ticket => {
+        const startPoint = toDate(ticket.assignedAt || ticket.createdAt);
+        if (!startPoint) return false;
 
-        if (!startPoint) return true;
+        const responded = toDate(ticket.firstRespondedAt);
+        const isFinished = ticket.status === 'Resolved' || ticket.status === 'Closed';
+        const finishedAt = isFinished ? toDate(ticket.resolvedAt || ticket.closedAt) : null;
 
-        const dept = departments.find(d => d.id === t.departmentId);
-        const channel = t.channel || 'Email';
-        const priority = t.priority || 'Normal';
-        const limitHours = slaSettings[channel as TicketChannel]?.[priority] || 4;
+        const dept = departments.find(d => d.id === ticket.departmentId);
+        const channel = getSLAChannel(ticket.channel);
+        const priority = ticket.priority || 'Normal';
+        const limitHours = (slaSettings[channel] || slaSettings['Email'])?.[priority] || 24;
 
         const compareTime = finishedAt || responded || now;
         const workingHoursElapsed = calculateWorkingHoursElapsed(startPoint, compareTime, dept?.workingHours);
@@ -145,12 +164,10 @@ const assignedDayTickets = dayTickets.filter(
         return workingHoursElapsed < limitHours;
       }).length;
 
-      const rate = Math.round((compliantCount / assignedDayTickets.length) * 100);
-
       data.push({
         day: format(day, 'MMM dd'),
         fullDate: format(day, 'EEE'),
-        compliance: rate,
+        compliance: Math.round((compliantCount / eligibleDayTickets.length) * 100),
       });
     });
     return data;
@@ -206,7 +223,7 @@ const assignedDayTickets = dayTickets.filter(
               fillOpacity={1}
               fill="url(#colorCompliance)"
               animationDuration={1500}
-              connectNulls
+              connectNulls={false}
             />
           </AreaChart>
         </ChartContainer>

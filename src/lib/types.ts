@@ -54,8 +54,26 @@ export type School = {
   name: string;
 };
 
-export type TicketStatus = 'Open' | 'In Progress' | 'Resolved' | 'Closed' | 'Queue' | 'Waiting' | 'Duplicate';
+export type TicketStatus =
+  | 'Open'
+  | 'In Progress'
+  | 'Resolved'
+  | 'Closed'
+  | 'Queue'
+  | 'Waiting'
+  | 'Duplicate'
+  | 'Ignored';
 
+  export const SLA_EXCLUDED_STATUSES: TicketStatus[] = [
+  'Duplicate',
+  'Ignored',
+];
+
+export const isSLAExcluded = (
+  status: TicketStatus
+): boolean => {
+  return SLA_EXCLUDED_STATUSES.includes(status);
+};
 export type TicketPriority = 'Low' | 'Normal' | 'High' | 'Urgent';
 
 export type TicketChannel = 'Email' | 'Phone' | 'Walk-in' | 'Social Media' | 'Web' | 'Form' | 'WhatsApp';

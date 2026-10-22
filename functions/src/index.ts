@@ -52,6 +52,27 @@ type ResolvedRouting = {
         enabled: true,
     };
 }
+// Real taxonomy names from the CRM settings. These are not Firebase document IDs.
+// For all-campus queues, only use valid campus/school/division/grade mappings
+// when the routing selector has enough information to identify a unique route.
+const ALL_SCHOOL_NAMES = [
+    "American", "British", "IB",
+    "International Girls Only, American", "International Girls Only, British",
+    "National English", "National French",
+];
+
+const ALL_DIVISION_NAMES = [
+    "Academic Dean's Office", "Director's Office", "Early Years",
+    "Elementary", "High School", "Middle School",
+];
+
+const ALL_GRADE_NAMES = [
+    "Nursery", "Pre school", "KG1", "KG2",
+    "Foundation Stage 1", "Foundation Stage 2",
+    ...Array.from({ length: 12 }, (_, i) => `Grade${i + 1}`),
+    ...Array.from({ length: 13 }, (_, i) => `Year${i + 1}`),
+];
+
 const MAILBOXES: MailboxConfig[] = [
 
     // Collection / Accounting
@@ -172,6 +193,45 @@ const MAILBOXES: MailboxConfig[] = [
     department: "General support",
     enabled:true,
 },
+    // Added academic mailboxes: 1st Settlement and Porto Said.
+    // Do not use the literal values "Both", "All" or "All School" as taxonomy names.
+    academicMailbox(
+        "ad.tg@nis-egypt.com",
+        "PbHP5tPr5EjuWAs6NtAn",
+        "1st Settlement",
+        [{
+            school: "American",
+            division: "Academic Dean's Office",
+            grades: Array.from({ length: 12 }, (_, i) => `Grade${i + 1}`),
+        }]
+    ),
+    academicMailbox(
+        "dr.tg@nis-egypt.com",
+        "PbHP5tPr5EjuWAs6NtAn",
+        "1st Settlement",
+        ALL_SCHOOL_NAMES.map((school) => ({
+            school,
+            division: "Director's Office",
+            grades: [...ALL_GRADE_NAMES],
+        }))
+    ),
+    ...[
+        "abdelnasser.ahmed@nis-egypt.com",
+        "hagar.elnaggar@nis-egypt.com",
+        "portosaid.director's.office@nis-egypt.com",
+    ].map((email): MailboxConfig => academicMailbox(
+        email,
+        "ZKLWPTV7ip6bC6dK95L4",
+        "Porto Said",
+        ALL_SCHOOL_NAMES.flatMap((school) =>
+            ALL_DIVISION_NAMES.map((division) => ({
+                school,
+                division,
+                grades: [...ALL_GRADE_NAMES],
+            }))
+        )
+    )),
+
     // Academic queues
     academicMailbox(
         "ks1-2-nci-br@nis-egypt.com",
@@ -1299,47 +1359,103 @@ function hasNormalizedOverlap(left: string[], right: string[]): boolean {
     );
 }
 
+type AcademicTaxonomy = {
+    schools: Map<string, string[]>;
+    divisions: Map<string, string[]>;
+    grades: Map<string, string[]>;
+};
+
+async function loadAcademicTaxonomy(
+    db: admin.firestore.Firestore
+): Promise<AcademicTaxonomy> {
+    const readCatalog = async (collectionName: string): Promise<Map<string, string[]>> => {
+        const snapshot = await db.collection(collectionName).get();
+        const map = new Map<string, string[]>();
+        for (const doc of snapshot.docs) {
+            const data = doc.data() as any;
+            const aliases = collectEmployeeValues(
+                data.name, data.nameEn, data.label, data.title,
+                data.code, data.displayName
+            );
+            for (const alias of aliases) {
+                const key = normalizeRoutingText(alias);
+                if (!key) continue;
+                const ids = map.get(key) || [];
+                if (!ids.includes(doc.id)) ids.push(doc.id);
+                map.set(key, ids);
+            }
+        }
+        return map;
+    };
+
+    const [schools, divisions, grades] = await Promise.all([
+        readCatalog("schools"),
+        readCatalog("divisions"),
+        readCatalog("grades"),
+    ]);
+    return { schools, divisions, grades };
+}
+
+function taxonomyIds(catalog: Map<string, string[]>, name: string | null): string[] {
+    return name ? catalog.get(normalizeRoutingText(name)) || [] : [];
+}
+
+function employeeHasScope(
+    ids: unknown,
+    names: unknown,
+    requiredName: string,
+    catalog: Map<string, string[]>
+): boolean {
+    const requiredIds = taxonomyIds(catalog, requiredName);
+    // Fail closed when an academic scope has no matching Firestore taxonomy record.
+    if (!requiredIds.length) return false;
+    const employeeIds = collectEmployeeValues(ids);
+    if (employeeIds.length > 0) {
+        return employeeIds.some((id) => requiredIds.includes(id));
+    }
+    // Support older user documents containing names rather than IDs.
+    return hasNormalizedOverlap(collectEmployeeValues(names), [requiredName]);
+}
+
 function employeeMatchesMailbox(
     employee: any,
     mailbox: MailboxConfig,
-    routing: ResolvedRouting
+    routing: ResolvedRouting,
+    taxonomy: AcademicTaxonomy
 ): boolean {
-    // Only an available, logged-in employee may receive an email ticket.
     if (employee.role !== "Employee" || employee.status !== "Available") return false;
     if (!employee.activeSessionId) return false;
 
-    // Category/Department is filtered by the Firestore query in syncEmails.
-    // Campus is mandatory for automatic assignment.
     const campuses = collectEmployeeValues(employee.campusId, employee.campusIds);
     if (!mailbox.campusId || !campuses.includes(mailbox.campusId)) return false;
 
-    // A mailbox with multiple possible routes cannot be safely assigned
-    // until a single school/division route is identified.
+    // Academic mailboxes must resolve to one coherent school/division route.
     if (!routing.selectedRoute || !routing.schoolName || !routing.divisionName) return false;
 
-    const schools = collectEmployeeValues(
-        employee.schools, employee.schoolNames, employee.school,
-        employee.schoolName, employee.curriculums, employee.curriculum
-    );
-    if (!hasNormalizedOverlap(schools, [routing.schoolName])) return false;
+    if (!employeeHasScope(
+        employee.schoolIds,
+        [employee.schools, employee.schoolNames, employee.school, employee.schoolName],
+        routing.schoolName,
+        taxonomy.schools
+    )) return false;
 
-    const divisions = collectEmployeeValues(
-        employee.divisions, employee.divisionNames,
-        employee.division, employee.divisionName
-    );
-    if (!hasNormalizedOverlap(divisions, [routing.divisionName])) return false;
+    if (!employeeHasScope(
+        employee.divisionIds,
+        [employee.divisions, employee.divisionNames, employee.division, employee.divisionName],
+        routing.divisionName,
+        taxonomy.divisions
+    )) return false;
 
-    // The mailbox's configured grades determine the eligible scope.
-    // A grade mentioned unambiguously in the email narrows the scope;
-    // otherwise any grade covered by that specific mailbox route is valid.
     const requiredGrades = routing.gradeName
         ? [routing.gradeName]
         : routing.selectedRoute.grades;
-    const grades = collectEmployeeValues(
-        employee.grades, employee.gradeNames,
-        employee.grade, employee.gradeName
-    );
-    if (!requiredGrades.length || !hasNormalizedOverlap(grades, requiredGrades)) return false;
+    if (!requiredGrades.length) return false;
+    if (!requiredGrades.some((grade) => employeeHasScope(
+        employee.gradeIds,
+        [employee.grades, employee.gradeNames, employee.grade, employee.gradeName],
+        grade,
+        taxonomy.grades
+    ))) return false;
 
     const mailboxEmails = collectEmployeeValues(
         employee.mailboxEmails, employee.queueEmails, employee.mailboxes
@@ -1662,6 +1778,9 @@ export const syncEmails = onSchedule(
 
             const key = JSON.parse(keyString);
             const db = admin.firestore();
+
+            // Resolve mailbox names to actual Firestore document IDs once per sync run.
+            const taxonomy = await loadAcademicTaxonomy(db);
 
             const deptsSnapshot = await db.collection("departments").get();
 
@@ -2085,13 +2204,35 @@ if (isDeliveryNotification) {
                                         fullBodyText
                                     );
 
+                                const selectedGradeNames = routing.selectedRoute?.grades || [];
+                                const schoolIds = taxonomyIds(taxonomy.schools, routing.schoolName);
+                                const divisionIds = taxonomyIds(taxonomy.divisions, routing.divisionName);
+                                const gradeIds = routing.gradeName
+                                    ? taxonomyIds(taxonomy.grades, routing.gradeName)
+                                    : [];
+                                if (mailbox.department === "Academic" &&
+                                    (!routing.selectedRoute || schoolIds.length !== 1 || divisionIds.length !== 1 ||
+                                     !selectedGradeNames.length ||
+                                     selectedGradeNames.some((grade) => !taxonomyIds(taxonomy.grades, grade).length))) {
+                                    console.warn("ACADEMIC ROUTING INCOMPLETE: ticket will remain in Queue", {
+                                        mailbox: mailbox.email,
+                                        school: routing.schoolName,
+                                        division: routing.divisionName,
+                                        routeResolved: Boolean(routing.selectedRoute),
+                                    });
+                                }
+
                                 let assignedTo: any = null;
                                 let status: "Queue" | "Open" = "Queue";
 
                                 if (
-                                    isWorkingTime(
-                                        targetDept.workingHours
-                                    )
+                                    isWorkingTime(targetDept.workingHours) &&
+                                    mailbox.department === "Academic" &&
+                                    routing.selectedRoute &&
+                                    schoolIds.length === 1 &&
+                                    divisionIds.length === 1 &&
+                                    selectedGradeNames.length > 0 &&
+                                    selectedGradeNames.every((grade) => taxonomyIds(taxonomy.grades, grade).length > 0)
                                 ) {
                                     const deptRef = db
                                         .collection("departments")
@@ -2125,7 +2266,8 @@ if (isDeliveryNotification) {
                                                         employeeMatchesMailbox(
                                                             employee,
                                                             mailbox,
-                                                            routing
+                                                            routing,
+                                                            taxonomy
                                                         )
                                                     )
                                                     .sort((a, b) =>
@@ -2264,6 +2406,11 @@ if (isDeliveryNotification) {
                                     divisionNames:
                                         routing.divisions,
 
+                                    // IDs are resolved from Firestore taxonomy; never guess IDs from names.
+                                    schoolId: schoolIds.length === 1 ? schoolIds[0] : null,
+                                    divisionId: divisionIds.length === 1 ? divisionIds[0] : null,
+                                    gradeId: gradeIds.length === 1 ? gradeIds[0] : null,
+
                                     school:
                                         routing.schoolName,
                                     schoolName:
@@ -2276,9 +2423,9 @@ if (isDeliveryNotification) {
                                     gradeName:
                                         routing.gradeName,
                                     grades:
-                                        routing.allowedGrades,
+                                        routing.selectedRoute?.grades || routing.allowedGrades,
                                     allowedGrades:
-                                        routing.allowedGrades,
+                                        routing.selectedRoute?.grades || routing.allowedGrades,
 
                                     routingOptions:
                                         mailbox.routes || [],

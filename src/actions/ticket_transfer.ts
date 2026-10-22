@@ -21,6 +21,48 @@ export type TransferState = {
   errors?: { form?: string[] };
 };
 
+/**
+ * Recover the actual routing scope of a ticket, including email mailbox routes.
+ * Never infer a route by mixing school/division/grades from separate routes.
+ * The round-robin matcher handles ambiguous or missing scope by returning null.
+ */
+function ticketAssignmentScope(ticket: Ticket, departmentId: string) {
+  const t = ticket as Ticket & {
+    school?: string | null;
+    division?: string | null;
+    grade?: string | null;
+    grades?: string[];
+    allowedGrades?: string[];
+    routingOptions?: Array<{ school: string; division: string; grades: string[] }>;
+    originalRecipientEmail?: string | null;
+  };
+
+  const routes = Array.isArray(t.routingOptions) ? t.routingOptions : [];
+  // Preserve every complete route. Do not flatten their grades into one list.
+  const routingOptions = routes.map(route => ({
+    school: route.school,
+    division: route.division,
+    grades: Array.isArray(route.grades) ? route.grades : [],
+  }));
+  const grades = Array.isArray(t.grades) && t.grades.length > 0
+    ? t.grades
+    : (Array.isArray(t.allowedGrades) ? t.allowedGrades : []);
+
+  return {
+    departmentId,
+    campusId: t.campusId || null,
+    schoolId: t.schoolId || null,
+    divisionId: t.divisionId || null,
+    gradeId: t.gradeId || null,
+    schoolName: t.schoolName || t.school || null,
+    divisionName: t.divisionName || t.division || null,
+    gradeName: t.gradeName || t.grade || null,
+    grades,
+    mailboxEmail: t.originalRecipientEmail || t.mailboxEmail || null,
+    routingOptions,
+  };
+}
+
 export async function transferTicketToCategoryAction(
   prevState: TransferState,
   formData: FormData
@@ -34,52 +76,42 @@ export async function transferTicketToCategoryAction(
     actorId: formData.get('actorId'),
     actorName: formData.get('actorName'),
   });
-
   if (!validated.success) {
     return { success: false, message: 'Validation failed. Please check the selected category.' };
   }
-
   const { ticketId, newCategoryId, actorId, actorName } = validated.data;
 
   try {
-    // 1. Get actor profile to verify authority
+    // Check the current actor. This keeps the existing department restriction,
+    // and also blocks an unknown actor from bypassing that restriction.
     const actorDoc = await db.collection('users').doc(actorId).get();
-    const actorData = actorDoc.exists ? (actorDoc.data() as UserProfile) : null;
+    if (!actorDoc.exists) return { success: false, message: 'User not found.' };
+    const actorData = actorDoc.data() as UserProfile;
 
-    // 2. Get current ticket to know previous state
-    const ticketDoc = await db.collection('tickets').doc(ticketId).get();
+    const ticketRef = db.collection('tickets').doc(ticketId);
+    const ticketDoc = await ticketRef.get();
     if (!ticketDoc.exists) return { success: false, message: 'Ticket not found.' };
     const ticketData = ticketDoc.data() as Ticket;
 
-    // Authorization check: Non-admins must belong to the CURRENT department of the ticket
-    if (actorData && actorData.role !== 'Admin') {
-      if (ticketData.departmentId && actorData.departmentId !== ticketData.departmentId) {
-        return {
-          success: false,
-          message: `Permission denied: This ticket belongs to ${ticketData.departmentName || 'another department'}. Transferred tickets are read-only for previous departments.`,
-        };
-      }
+    if (actorData.role !== 'Admin' &&
+        ticketData.departmentId && actorData.departmentId !== ticketData.departmentId) {
+      return {
+        success: false,
+        message: `Permission denied: This ticket belongs to ${ticketData.departmentName || 'another department'}. Transferred tickets are read-only for previous departments.`,
+      };
     }
 
-    // 3. Get the new category details
     const categoryDoc = await db.collection('departments').doc(newCategoryId).get();
     if (!categoryDoc.exists) return { success: false, message: 'Selected category does not exist.' };
     const categoryName = categoryDoc.data()!.name;
-    const campusId = ticketData?.campusId;
 
-    // 4. Get the next available assignee in that category via Round Robin
-    const newAssignee = await getRoundRobinAssignee({
-        departmentId: newCategoryId,
-        campusId: ticketData?.campusId,
-        schoolId: ticketData?.schoolId,
-        divisionId: ticketData?.divisionId,
-        gradeId: ticketData?.gradeId,
-    });
-    
-    // If no one is available, the status becomes "Queue"
+    // The ONLY automatic assignment path here goes through the validated
+    // department + campus + school + division + grade (+ mailbox route) scope.
+    const newAssignee = await getRoundRobinAssignee(
+      ticketAssignmentScope(ticketData, newCategoryId)
+    );
     const newStatus = newAssignee ? 'Open' : 'Queue';
 
-    // 5. Construct comprehensive historical transfer record
     const transferId = `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const transferRecord: TicketTransferRecord = {
       id: transferId,
@@ -109,17 +141,12 @@ export async function transferTicketToCategoryAction(
         avatarUrl: newAssignee.avatarUrl || '',
         email: newAssignee.email || '',
       } : null,
-      requestedBy: {
-        userId: actorId,
-        name: actorName,
-      },
-      approvedBy: {
-        userId: actorId,
-        name: actorName,
-      },
+      requestedBy: { userId: actorId, name: actorName },
+      approvedBy: { userId: actorId, name: actorName },
       transferredAt: new Date().toISOString(),
     };
 
+    // Keep all original ticket routing fields unchanged. Only ownership changes.
     const updates: Record<string, any> = {
       departmentId: newCategoryId,
       departmentName: categoryName,
@@ -127,7 +154,7 @@ export async function transferTicketToCategoryAction(
         userId: newAssignee.id,
         name: newAssignee.name,
         email: newAssignee.email || '',
-        avatarUrl: newAssignee.avatarUrl,
+        avatarUrl: newAssignee.avatarUrl || '',
       } : null,
       assignedAt: newAssignee ? FieldValue.serverTimestamp() : null,
       status: newStatus,
@@ -135,35 +162,30 @@ export async function transferTicketToCategoryAction(
       transferHistory: FieldValue.arrayUnion(transferRecord),
     };
 
-    // 6. Update the ticket and write to ticket-transfers collection in batch
     const batch = db.batch();
-    batch.update(db.collection('tickets').doc(ticketId), updates);
+    batch.update(ticketRef, updates);
     batch.set(db.collection('ticket-transfers').doc(transferId), {
       ...transferRecord,
       transferredAtTimestamp: FieldValue.serverTimestamp(),
     });
     await batch.commit();
 
-    // 7. Log the event
     await logSystemEvent({
       eventType: 'TICKET_TRANSFERRED',
       actor: { userId: actorId, name: actorName },
       message: `${actorName} transferred ticket #${ticketData.ticketNumber || ticketId.substring(0, 4)} from "${ticketData.departmentName}" to "${categoryName}".`,
-      details: { 
-        ticketId, 
-        transferId,
+      details: {
+        ticketId, transferId,
         fromDepartmentId: ticketData.departmentId,
         fromDepartmentName: ticketData.departmentName,
-        newCategoryId, 
-        newCategoryName: categoryName, 
+        newCategoryId, newCategoryName: categoryName,
         previousAssigneeId: ticketData.assignedTo?.userId || null,
         previousAssigneeName: ticketData.assignedTo?.name || 'Unassigned',
         newAssigneeId: newAssignee?.id || null,
-        newAssigneeName: newAssignee?.name || 'In Queue'
-      }
+        newAssigneeName: newAssignee?.name || 'In Queue',
+      },
     });
 
-    // 8. Notify the new assignee if present via in-app event
     if (newAssignee) {
       await db.collection('ticket-events').add({
         ticketId,
@@ -180,10 +202,9 @@ export async function transferTicketToCategoryAction(
     revalidatePath('/tickets');
     revalidatePath('/track-history');
     revalidatePath('/dashboard');
-    
-    return { 
-      success: true, 
-      message: `Successfully transferred to ${categoryName}. ${newAssignee ? `Assigned to ${newAssignee.name}.` : 'No staff available, moved to Queue.'}` 
+    return {
+      success: true,
+      message: `Successfully transferred to ${categoryName}. ${newAssignee ? `Assigned to ${newAssignee.name}.` : 'No eligible staff available, moved to Queue.'}`,
     };
   } catch (e: any) {
     console.error('Transfer Error:', e);

@@ -8,6 +8,90 @@ import { getRoundRobinAssignee } from './ticket_assignment';
 import type { TicketEvent, UserProfile, Ticket, TicketTransferRecord } from '@/lib/types';
 
 /**
+ * Validate a specifically selected employee against the ticket's actual scope.
+ * Manual reassignment does NOT require Available/activeSessionId: managers may
+ * allocate work for later. Scope is still mandatory and never bypassed.
+ */
+async function employeeCoversTicketScope(
+    db: NonNullable<typeof adminDb>,
+    employee: UserProfile,
+    ticket: Ticket
+): Promise<boolean> {
+    const t = ticket as any;
+    const e = employee as any;
+    const values = (...inputs: unknown[]): string[] => inputs.flatMap((input) =>
+        Array.isArray(input) ? input : [input]
+    ).filter((input): input is string => typeof input === 'string' && input.trim().length > 0)
+     .map((input) => input.trim());
+    const normalized = (v: unknown) => String(v || '').normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (e.role !== 'Employee' || !t.departmentId || e.departmentId !== t.departmentId) return false;
+    if (!t.campusId || !values(e.campusIds, e.campusId).includes(t.campusId)) return false;
+
+    const routes = Array.isArray(t.routingOptions) ? t.routingOptions : [];
+    const requestedSchool = t.schoolName || t.school;
+    const requestedDivision = t.divisionName || t.division;
+    const requestedGrade = t.gradeName || t.grade;
+    const candidates = routes.filter((r: any) =>
+        (!requestedSchool || normalized(r.school) === normalized(requestedSchool)) &&
+        (!requestedDivision || normalized(r.division) === normalized(requestedDivision)) &&
+        (!requestedGrade || values(r.grades).some(g => normalized(g) === normalized(requestedGrade)))
+    );
+    // No mixing of grades from different routes when one mailbox spans many routes.
+    if (routes.length > 0 && candidates.length !== 1) return false;
+    const route = candidates.length === 1 ? candidates[0] : null;
+
+    const schoolName = requestedSchool || route?.school;
+    const divisionName = requestedDivision || route?.division;
+    const gradeNames = t.gradeId ? [] : requestedGrade ? [requestedGrade] :
+        route ? values(route.grades) : values(t.grades, t.allowedGrades);
+
+    // All required dimensions must be known: absence must not mean "match all".
+    if (!t.schoolId && !schoolName) return false;
+    if (!t.divisionId && !divisionName) return false;
+    if (!t.gradeId && gradeNames.length === 0) return false;
+
+    const [schools, divisions, grades] = await Promise.all([
+        db.collection('schools').get(),
+        db.collection('divisions').get(),
+        db.collection('grades').get(),
+    ]);
+    const lookup = (snap: FirebaseFirestore.QuerySnapshot, name: string): string[] =>
+        snap.docs.filter(d => {
+            const v = d.data() as any;
+            return values(v.name, v.nameEn, v.label, v.title, v.code, v.displayName)
+                .some(text => normalized(text) === normalized(name));
+        }).map(d => d.id);
+
+    const matchDimension = (
+        agentIds: unknown, agentNames: unknown, targetId: unknown,
+        targetName: unknown, catalog: FirebaseFirestore.QuerySnapshot
+    ): boolean => {
+        const ids = values(agentIds);
+        const names = values(agentNames).map(normalized);
+        const id = typeof targetId === 'string' ? targetId.trim() : '';
+        const name = typeof targetName === 'string' ? targetName.trim() : '';
+        // An explicit ID is authoritative; never override it with a conflicting name.
+        if (id) return ids.includes(id);
+        if (!name) return false;
+        return lookup(catalog, name).some(target => ids.includes(target)) ||
+            names.includes(normalized(name));
+    };
+
+    if (!matchDimension(e.schoolIds, values(e.schoolNames, e.schools, e.schoolName, e.school),
+        t.schoolId, schoolName, schools)) return false;
+    if (!matchDimension(e.divisionIds, values(e.divisionNames, e.divisions, e.divisionName, e.division),
+        t.divisionId, divisionName, divisions)) return false;
+
+    if (t.gradeId) return matchDimension(e.gradeIds, values(e.gradeNames, e.grades, e.gradeName, e.grade),
+        t.gradeId, requestedGrade, grades);
+    return gradeNames.some(name => matchDimension(
+        e.gradeIds, values(e.gradeNames, e.grades, e.gradeName, e.grade), null, name, grades
+    ));
+}
+
+/**
  * Approves a transfer or reassignment request.
  * Updates the ticket and all linked admin events to maintain consistency.
  */
@@ -73,6 +157,12 @@ export async function approveRequestAction(
                 schoolId: ticketData.schoolId,
                 divisionId: ticketData.divisionId,
                 gradeId: ticketData.gradeId,
+                schoolName: ticketData.schoolName,
+                divisionName: ticketData.divisionName,
+                gradeName: ticketData.gradeName,
+                grades: (ticketData as any).allowedGrades || (ticketData as any).grades,
+                mailboxEmail: ticketData.mailboxEmail,
+                routingOptions: (ticketData as any).routingOptions,
             });
             const newStatus = newAssignee ? 'Open' : 'Queue';
 
@@ -179,16 +269,24 @@ export async function approveRequestAction(
 
             if (newAssigneeId && newAssigneeId !== 'unassigned') {
                 const userDoc = await db.collection('users').doc(newAssigneeId).get();
-                if (userDoc.exists) {
-                    const ud = userDoc.data()! as UserProfile;
-                    assigneeData = {
-                        userId: newAssigneeId,
-                        name: ud.name,
-                        email: ud.email || '',
-                        avatarUrl: ud.avatarUrl || '',
-                    };
-                    status = 'Open';
+                if (!userDoc.exists) {
+                    return { success: false, message: 'Selected employee does not exist.' };
                 }
+                const ud = userDoc.data() as UserProfile;
+                const eligible = await employeeCoversTicketScope(db, ud, ticketData);
+                if (!eligible) {
+                    return {
+                        success: false,
+                        message: 'Reassignment blocked: selected employee does not match the ticket department, campus, school, division and grades. The ticket was not changed.'
+                    };
+                }
+                assigneeData = {
+                    userId: newAssigneeId,
+                    name: ud.name,
+                    email: ud.email || '',
+                    avatarUrl: ud.avatarUrl || '',
+                };
+                status = 'Open';
             }
 
             await db.collection('tickets').doc(ticketId).update({

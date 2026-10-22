@@ -15,17 +15,27 @@ interface ChartProps {
   tickets: Ticket[];
 }
 
+type DepartmentStatusData = {
+  department: string;
+  Active: number;
+  Resolved: number;
+  Closed: number;
+  Ignored: number;
+};
+
 export function TicketsByStatusDepartmentChart({ tickets }: ChartProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const ignoredLabel = language === 'ar' ? 'تم تجاهلها' : 'Ignored';
 
   const chartConfig = {
-    active: { label: t('activeWorkload'), color: '#1e3a8a' }, // Work in progress
-    resolved: { label: t('resolved'), color: '#10b981' }, // Resolved
-    closed: { label: t('closed'), color: '#ef4444' }, // Closed
+    Active: { label: t('activeWorkload'), color: '#1e3a8a' },
+    Resolved: { label: t('resolved'), color: '#10b981' },
+    Closed: { label: t('closed'), color: '#ef4444' },
+    Ignored: { label: ignoredLabel, color: '#64748b' },
   };
 
   const chartData = useMemo(() => {
-    const deptMap: Record<string, any> = {};
+    const deptMap: Record<string, DepartmentStatusData> = {};
 
     tickets.forEach((ticket) => {
       const dept = ticket.departmentName || t('Other');
@@ -37,24 +47,26 @@ export function TicketsByStatusDepartmentChart({ tickets }: ChartProps) {
           Active: 0,
           Resolved: 0,
           Closed: 0,
+          Ignored: 0,
         };
       }
-      
-      const isActive = ['Open', 'In Progress', 'Queue', 'Waiting'].includes(status);
 
-      if (isActive) {
-          deptMap[dept].Active = (deptMap[dept].Active || 0) + 1;
+      if (['Open', 'In Progress', 'Queue', 'Waiting'].includes(status)) {
+        deptMap[dept].Active += 1;
       } else if (status === 'Resolved') {
-          deptMap[dept].Resolved = (deptMap[dept].Resolved || 0) + 1;
+        deptMap[dept].Resolved += 1;
       } else if (status === 'Closed') {
-          deptMap[dept].Closed = (deptMap[dept].Closed || 0) + 1;
+        deptMap[dept].Closed += 1;
+      } else if (status === 'Ignored') {
+        deptMap[dept].Ignored += 1;
       }
+      // Duplicate remains excluded from this chart, as in the original version.
     });
 
-    return Object.values(deptMap).sort((a: any, b: any) => {
-        const totalA = (a.Active || 0) + (a.Resolved || 0) + (a.Closed || 0);
-        const totalB = (b.Active || 0) + (b.Resolved || 0) + (b.Closed || 0);
-        return totalB - totalA;
+    return Object.values(deptMap).sort((a, b) => {
+      const totalA = a.Active + a.Resolved + a.Closed + a.Ignored;
+      const totalB = b.Active + b.Resolved + b.Closed + b.Ignored;
+      return totalB - totalA;
     });
   }, [tickets, t]);
 
@@ -64,28 +76,32 @@ export function TicketsByStatusDepartmentChart({ tickets }: ChartProps) {
     <Card className="col-span-full border-none shadow-sm bg-card">
       <CardHeader className="pb-2">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="text-start">
-                <CardTitle className="text-lg font-bold">{t('categoryStatus')}</CardTitle>
-                <CardDescription className="text-[11px]">{t('categoryStatusSub')}</CardDescription>
+          <div className="text-start">
+            <CardTitle className="text-lg font-bold">{t('categoryStatus')}</CardTitle>
+            <CardDescription className="text-[11px]">{t('categoryStatusSub')}</CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-4 text-[10px] font-bold uppercase tracking-wider">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-sm bg-[#1e3a8a]" />
+              <span className="text-muted-foreground">{t('activeWorkload')}</span>
             </div>
-            <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-wider">
-                <div className="flex items-center gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-sm bg-[#1e3a8a]" />
-                    <span className="text-muted-foreground">{t('activeWorkload')}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-sm bg-[#10b981]" />
-                    <span className="text-muted-foreground">{t('resolved')}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-sm bg-[#ef4444]" />
-                    <span className="text-muted-foreground">{t('closed')}</span>
-                </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-sm bg-[#10b981]" />
+              <span className="text-muted-foreground">{t('resolved')}</span>
             </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-sm bg-[#ef4444]" />
+              <span className="text-muted-foreground">{t('closed')}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-sm bg-[#64748b]" />
+              <span className="text-muted-foreground">{ignoredLabel}</span>
+            </div>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="pt-2">
-        <ChartContainer config={chartConfig as any} className="h-[300px] w-full">
+        <ChartContainer config={chartConfig} className="h-[300px] w-full">
           <BarChart
             data={chartData}
             margin={{ top: 5, right: 30, left: -20, bottom: 60 }}
@@ -104,35 +120,42 @@ export function TicketsByStatusDepartmentChart({ tickets }: ChartProps) {
               textAnchor="end"
               tick={{ fill: 'hsl(var(--muted-foreground))' }}
             />
-            <YAxis 
-              axisLine={false} 
-              tickLine={false} 
-              fontSize={10} 
+            <YAxis
+              axisLine={false}
+              tickLine={false}
+              fontSize={10}
               allowDecimals={false}
               tickMargin={8}
               tick={{ fill: 'hsl(var(--muted-foreground))' }}
             />
             <ChartTooltip cursor={{ fill: 'rgba(0,0,0,0.03)' }} content={<ChartTooltipContent />} />
-            <Bar 
-                dataKey="Active" 
-                fill={chartConfig.active.color} 
-                radius={[2, 2, 0, 0]} 
-                barSize={18}
-                animationDuration={1500}
+            <Bar
+              dataKey="Active"
+              fill={chartConfig.Active.color}
+              radius={[2, 2, 0, 0]}
+              barSize={18}
+              animationDuration={1500}
             />
-            <Bar 
-                dataKey="Resolved" 
-                fill={chartConfig.resolved.color} 
-                radius={[2, 2, 0, 0]} 
-                barSize={18}
-                animationDuration={1500}
+            <Bar
+              dataKey="Resolved"
+              fill={chartConfig.Resolved.color}
+              radius={[2, 2, 0, 0]}
+              barSize={18}
+              animationDuration={1500}
             />
-            <Bar 
-                dataKey="Closed" 
-                fill={chartConfig.closed.color} 
-                radius={[2, 2, 0, 0]} 
-                barSize={18}
-                animationDuration={1500}
+            <Bar
+              dataKey="Closed"
+              fill={chartConfig.Closed.color}
+              radius={[2, 2, 0, 0]}
+              barSize={18}
+              animationDuration={1500}
+            />
+            <Bar
+              dataKey="Ignored"
+              fill={chartConfig.Ignored.color}
+              radius={[2, 2, 0, 0]}
+              barSize={18}
+              animationDuration={1500}
             />
           </BarChart>
         </ChartContainer>

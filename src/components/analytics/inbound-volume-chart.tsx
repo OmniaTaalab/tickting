@@ -31,7 +31,7 @@ const toDate = (timestamp: Timestamp | string | undefined): Date | null => {
   try {
     const d = new Date(timestamp);
     return isNaN(d.getTime()) ? null : d;
-  } catch (e) {
+  } catch {
     return null;
   }
 };
@@ -69,42 +69,59 @@ function CustomXAxisTick(props: any) {
 }
 
 export function InboundVolumeChart({ tickets }: ChartProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const chartConfig = {
     Email: { label: t('Email'), color: '#3b82f6' },
     Phone: { label: t('Phone'), color: '#10b981' },
     'Walk-in': { label: t('Walk-in'), color: '#a855f7' },
     'Social Media': { label: t('Social Media'), color: '#0ea5e9' },
+    Web: { label: t('Web'), color: '#f59e0b' },
+    Form: { label: t('Form'), color: '#6366f1' },
+    WhatsApp: { label: t('WhatsApp'), color: '#059669' },
   };
 
-  const chartData = useMemo(() => {
+  const { chartData, ignoredCount } = useMemo(() => {
     const data = [];
     const now = new Date();
+    let ignored = 0;
 
     for (let i = 13; i >= 0; i--) {
       const day = startOfDay(subDays(now, i));
-      const dayTickets = tickets.filter(t => {
-        const created = toDate(t.createdAt);
-        return created && isSameDay(created, day);
+      const dayTickets = tickets.filter(ticket => {
+        const created = toDate(ticket.createdAt);
+        return created !== null && isSameDay(created, day);
       });
+
+      // Ignored tickets remain part of their original inbound channel.
+      // This counter is separate from the stacked chart so they are not counted twice.
+      ignored += dayTickets.filter(ticket => ticket.status === 'Ignored').length;
 
       data.push({
         day: `D${14 - i}`,
         fullDate: format(day, 'MMM d'),
-        Email: dayTickets.filter(t => t.channel === 'Email').length,
-        Phone: dayTickets.filter(t => t.channel === 'Phone').length,
-        'Walk-in': dayTickets.filter(t => t.channel === 'Walk-in').length,
-        'Social Media': dayTickets.filter(t => t.channel === 'Social Media').length,
+        Email: dayTickets.filter(ticket => ticket.channel === 'Email').length,
+        Phone: dayTickets.filter(ticket => ticket.channel === 'Phone').length,
+        'Walk-in': dayTickets.filter(ticket => ticket.channel === 'Walk-in').length,
+        'Social Media': dayTickets.filter(ticket => ticket.channel === 'Social Media').length,
+        Web: dayTickets.filter(ticket => ticket.channel === 'Web').length,
+        Form: dayTickets.filter(ticket => ticket.channel === 'Form').length,
+        WhatsApp: dayTickets.filter(ticket => ticket.channel === 'WhatsApp').length,
       });
     }
-    return data;
+
+    return { chartData: data, ignoredCount: ignored };
   }, [tickets]);
 
   return (
     <Card className="border-none shadow-sm bg-white overflow-hidden">
       <CardHeader className="pb-0">
-        <CardTitle className="text-base font-bold text-slate-800">{t('inboundVolumeTitle')}</CardTitle>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <CardTitle className="text-base font-bold text-slate-800">{t('inboundVolumeTitle')}</CardTitle>
+          <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
+            {language === 'ar' ? 'المتجاهلة' : 'Ignored'}: {ignoredCount}
+          </span>
+        </div>
       </CardHeader>
       <CardContent className="pt-6">
         <ChartContainer config={chartConfig} className="h-[380px] w-full">
@@ -145,7 +162,7 @@ export function InboundVolumeChart({ tickets }: ChartProps) {
               fill={chartConfig.Phone.color}
               fillOpacity={0.6}
             />
-             <Area
+            <Area
               type="monotone"
               dataKey="Walk-in"
               stackId="1"
@@ -159,6 +176,30 @@ export function InboundVolumeChart({ tickets }: ChartProps) {
               stackId="1"
               stroke={chartConfig['Social Media'].color}
               fill={chartConfig['Social Media'].color}
+              fillOpacity={0.6}
+            />
+            <Area
+              type="monotone"
+              dataKey="Web"
+              stackId="1"
+              stroke={chartConfig.Web.color}
+              fill={chartConfig.Web.color}
+              fillOpacity={0.6}
+            />
+            <Area
+              type="monotone"
+              dataKey="Form"
+              stackId="1"
+              stroke={chartConfig.Form.color}
+              fill={chartConfig.Form.color}
+              fillOpacity={0.6}
+            />
+            <Area
+              type="monotone"
+              dataKey="WhatsApp"
+              stackId="1"
+              stroke={chartConfig.WhatsApp.color}
+              fill={chartConfig.WhatsApp.color}
               fillOpacity={0.6}
             />
             <ChartLegend content={<ChartLegendContent />} />

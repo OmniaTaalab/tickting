@@ -25,20 +25,25 @@ const COLORS = [
 ];
 
 export function TicketsByAssigneeChart({ tickets }: ChartProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+
+  // Ignored tickets remain in the system but do not count toward assignee workload.
+  const ignoredCount = useMemo(
+    () => tickets.filter(ticket => ticket.status === 'Ignored').length,
+    [tickets]
+  );
 
   const chartData = useMemo(() => {
-    const assigneeCounts = tickets.reduce((acc, ticket) => {
-      const assigneeName = ticket.assignedTo?.name || t('unassigned');
-      acc[assigneeName] = (acc[assigneeName] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+    const assigneeCounts = tickets
+      .filter(ticket => ticket.status !== 'Ignored')
+      .reduce((acc, ticket) => {
+        const assigneeName = ticket.assignedTo?.name || t('unassigned');
+        acc[assigneeName] = (acc[assigneeName] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
 
     return Object.entries(assigneeCounts)
-      .map(([name, total]) => ({
-        name,
-        total,
-      }))
+      .map(([name, total]) => ({ name, total }))
       .sort((a, b) => b.total - a.total);
   }, [tickets, t]);
 
@@ -49,9 +54,8 @@ export function TicketsByAssigneeChart({ tickets }: ChartProps) {
         color: COLORS[index % COLORS.length],
       };
       return acc;
-    }, {} as any);
+    }, {} as Record<string, { label: string; color: string }>);
   }, [chartData]);
-
 
   return (
     <Card className="border-none shadow-sm overflow-hidden bg-white">
@@ -60,23 +64,34 @@ export function TicketsByAssigneeChart({ tickets }: ChartProps) {
       </CardHeader>
       <CardContent className="p-4 pt-2">
         <div className="flex flex-col gap-2">
-          <ChartContainer config={chartConfig} className="h-[120px] w-full aspect-square">
-            <PieChart>
-              <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-              <Pie
-                data={chartData}
-                dataKey="total"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                outerRadius={45}
-              >
-                {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-            </PieChart>
-          </ChartContainer>
+          {ignoredCount > 0 && (
+            <p className="text-[10px] font-semibold text-slate-500 text-start">
+              {language === 'ar' ? 'التذاكر المتجاهلة المستبعدة من توزيع العمل' : 'Ignored tickets excluded from workload'}: {ignoredCount}
+            </p>
+          )}
+          {chartData.length > 0 ? (
+            <ChartContainer config={chartConfig} className="h-[120px] w-full aspect-square">
+              <PieChart>
+                <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                <Pie
+                  data={chartData}
+                  dataKey="total"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={45}
+                >
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${entry.name}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ChartContainer>
+          ) : (
+            <p className="text-xs text-slate-400 text-center py-6">
+              {language === 'ar' ? 'لا توجد تذاكر ضمن توزيع العمل' : 'No tickets in workload'}
+            </p>
+          )}
           <div className="flex flex-col space-y-1">
             {chartData.slice(0, 3).map((item, index) => (
               <div key={item.name} className="flex items-center justify-between text-[10px] text-start">
@@ -84,14 +99,16 @@ export function TicketsByAssigneeChart({ tickets }: ChartProps) {
                   <div
                     className="h-2 w-2 rounded-full shrink-0"
                     style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                  ></div>
+                  />
                   <span className="text-slate-500 font-medium truncate">{item.name}</span>
                 </div>
                 <span className="font-black text-slate-900">{item.total}</span>
               </div>
             ))}
-             {chartData.length > 3 && (
-                <p className="text-[9px] text-slate-400 text-center italic mt-1">+{chartData.length - 3} {t('of')} {t('total')}</p>
+            {chartData.length > 3 && (
+              <p className="text-[9px] text-slate-400 text-center italic mt-1">
+                +{chartData.length - 3} {t('of')} {t('total')}
+              </p>
             )}
           </div>
         </div>

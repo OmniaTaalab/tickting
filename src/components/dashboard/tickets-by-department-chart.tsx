@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/chart';
 import type { Ticket } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useLanguage } from '@/hooks/use-language';
 
 interface ChartProps {
   tickets: Ticket[];
@@ -23,6 +24,11 @@ const COLORS = [
 ];
 
 export function TicketsByDepartmentChart({ tickets }: ChartProps) {
+  const { language } = useLanguage();
+  const ignoredCount = tickets.filter(ticket => ticket.status === 'Ignored').length;
+
+  // Count all tickets by department, including Ignored and Duplicate.
+  // SLA exclusions belong in SLA calculations, not in ticket-volume charts.
   const departmentCounts = tickets.reduce((acc, ticket) => {
     const deptName = ticket.departmentName || 'Uncategorized';
     acc[deptName] = (acc[deptName] || 0) + 1;
@@ -30,10 +36,7 @@ export function TicketsByDepartmentChart({ tickets }: ChartProps) {
   }, {} as Record<string, number>);
 
   const chartData = Object.entries(departmentCounts)
-    .map(([name, total]) => ({
-      name,
-      total,
-    }))
+    .map(([name, total]) => ({ name, total }))
     .sort((a, b) => b.total - a.total);
 
   const chartConfig = chartData.reduce((acc, item, index) => {
@@ -42,12 +45,15 @@ export function TicketsByDepartmentChart({ tickets }: ChartProps) {
       color: COLORS[index % COLORS.length],
     };
     return acc;
-  }, {} as any);
+  }, {} as Record<string, { label: string; color: string }>);
 
   return (
     <Card className="border-none shadow-sm overflow-hidden">
       <CardHeader className="p-4 pb-0">
         <CardTitle className="text-sm font-bold">Tickets by Category</CardTitle>
+        <p className="text-[10px] text-slate-500 font-medium">
+          {language === 'ar' ? 'التذاكر المتجاهلة' : 'Ignored tickets'}: <span className="font-bold text-slate-700">{ignoredCount}</span>
+        </p>
       </CardHeader>
       <CardContent className="p-4 pt-2">
         <div className="flex flex-col gap-2">
@@ -82,7 +88,7 @@ export function TicketsByDepartmentChart({ tickets }: ChartProps) {
               </div>
             ))}
             {chartData.length > 3 && (
-                <p className="text-[9px] text-muted-foreground text-center italic mt-1">+{chartData.length - 3} more</p>
+              <p className="text-[9px] text-muted-foreground text-center italic mt-1">+{chartData.length - 3} more</p>
             )}
           </div>
         </div>

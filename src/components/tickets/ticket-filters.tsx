@@ -69,6 +69,7 @@ interface TicketFiltersProps {
     Closed: number;
     Queue: number;
     Duplicate: number;
+    Ignored: number;
     Waiting: number;
   };
 }
@@ -276,6 +277,7 @@ export function TicketFilters({
                 ...(statusCounts?.Closed ? [{ id: 'Closed', label: t('closed'), count: statusCounts?.Closed }] : []),
                 { id: 'Queue', label: t('queue'), count: statusCounts?.Queue },
                 { id: 'Duplicate', label: t('duplicate'), count: statusCounts?.Duplicate },
+                { id: 'Ignored', label: 'Ignored', count: statusCounts?.Ignored },
               ].map((tab) => (
                 <TabsTrigger 
                   key={tab.id}

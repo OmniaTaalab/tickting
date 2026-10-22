@@ -1,4 +1,3 @@
-
 'use client';
 import { useMemo, useState, useEffect } from 'react';
 import {
@@ -22,7 +21,7 @@ import type { Ticket as TicketType, UserProfile, SLASettings, Department, Ticket
 import { DEFAULT_SLA_SETTINGS } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format, subDays, startOfDay, endOfDay } from 'date-fns';
-import { Inbox, AlertTriangle, CheckCircle2, Clock, Star, Calendar as CalendarIcon, RefreshCcw, LayoutList, CheckCircle } from 'lucide-react';
+import { Inbox, AlertTriangle, CheckCircle2, Clock, Star, Calendar as CalendarIcon, RefreshCcw, LayoutList, CheckCircle, Ban } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DateRange } from "react-day-picker";
 import { Calendar } from "@/components/ui/calendar";
@@ -157,10 +156,19 @@ function DashboardPage() {
     return result;
   }, [roleFilteredTickets, dateRange]);
 
+  // Only assigned tickets with SLA-applicable statuses participate in SLA metrics.
+  const slaEligibleTickets = useMemo(
+    () => (performanceFilteredTickets || []).filter(
+      ticket => ticket.status !== 'Duplicate' && ticket.status !== 'Ignored'
+    ),
+    [performanceFilteredTickets]
+  );
+
   const stats = useMemo(() => {
     if (!performanceFilteredTickets || !departments) return null;
 
     const openCount = performanceFilteredTickets.filter(t => t.status === 'Open').length;
+    const ignoredCount = performanceFilteredTickets.filter(t => t.status === 'Ignored').length;
     const pendingCount = performanceFilteredTickets.filter(t => {
         const s = t.status;
         return s === 'Queue' || s === 'Waiting' || s === 'In Progress';
@@ -199,21 +207,17 @@ function DashboardPage() {
         return workingHoursElapsed < limitHours;
     }
 
-   // Exclude Duplicate tickets from all SLA compliance calculations
-const assignedTickets = performanceFilteredTickets.filter(
-  t => !!t.assignedTo && t.status !== 'Duplicate'
-);
-const compliantCount = assignedTickets.filter(
-  t => isTicketSLACompliant(t)
-).length;
-const complianceRate = assignedTickets.length > 0
-  ? Math.round((compliantCount / assignedTickets.length) * 100)
-  : 100;
+    // Ignored and Duplicate must be absent from both numerator and denominator.
+    const assignedTickets = slaEligibleTickets.filter(t => !!t.assignedTo);
+    const compliantCount = assignedTickets.filter(isTicketSLACompliant).length;
+    const complianceRate = assignedTickets.length > 0
+      ? Math.round((compliantCount / assignedTickets.length) * 100)
+      : 100;
     const resolvedCount = performanceFilteredTickets.filter(t => t.status === 'Resolved' || t.status === 'Closed').length;
     const reopenedCount = performanceFilteredTickets.filter(t => (t.reopenedCount || 0) > 0).length;
 
-    return { openCount, pendingCount, complianceRate, resolvedCount, reopenedCount };
-  }, [performanceFilteredTickets, now, slaSettings, departments]);
+    return { openCount, pendingCount, ignoredCount, complianceRate, resolvedCount, reopenedCount };
+  }, [performanceFilteredTickets, slaEligibleTickets, now, slaSettings, departments]);
 
   const isLoading = isProfileLoading || areTicketsLoading;
   const isEmployee = userProfile?.role === 'Employee';
@@ -262,20 +266,21 @@ const complianceRate = assignedTickets.length > 0
             </div>
         </div>
 
-        <div className={cn("grid gap-4 md:grid-cols-3", isEmployee ? "lg:grid-cols-3" : "lg:grid-cols-5")}>
+        <div className={cn("grid gap-4 md:grid-cols-3", isEmployee ? "lg:grid-cols-4" : "lg:grid-cols-3 xl:grid-cols-6")}>
           <SummaryCard title={t('openTickets')} value={stats?.openCount || 0} footer={t('inCampuses')} icon={<Inbox />} iconBg="bg-blue-50" iconColor="text-blue-600" />
           <SummaryCard title={t('pendingTickets')} value={stats?.pendingCount || 0} footer={t('waiting')} icon={<LayoutList />} iconBg="bg-purple-50" iconColor="text-purple-600" />
           
-          {!isEmployee && <SummaryCard title={t('slaCompliance')} value={`${stats?.complianceRate || 100}%`} footer={t('standard')} icon={<CheckCircle2 />} iconBg="bg-green-50" iconColor="text-green-600" />}
+          {!isEmployee && <SummaryCard title={t('slaCompliance')} value={`${stats?.complianceRate ?? 100}%`} footer={t('standard')} icon={<CheckCircle2 />} iconBg="bg-green-50" iconColor="text-green-600" />}
           <SummaryCard title={t('resolved')} value={stats?.resolvedCount || 0} footer={t('selectedPeriod')} icon={<CheckCircle />} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
           <SummaryCard title={t('reopened')} value={stats?.reopenedCount || 0} footer={t('selectedPeriod')} icon={<RefreshCcw />} iconBg="bg-orange-50" iconColor="text-orange-600" />
+          <SummaryCard title="Ignored" value={stats?.ignoredCount ?? 0} footer="Excluded from SLA" icon={<Ban />} iconBg="bg-slate-100" iconColor="text-slate-600" />
         </div>
 
         <DivisionHealthCards tickets={roleFilteredTickets || []} performanceTickets={performanceFilteredTickets || []} />
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <div className="lg:col-span-3 space-y-6">
-            <SLAComplianceTrendChart tickets={performanceFilteredTickets || []} dateRange={dateRange} />
+            <SLAComplianceTrendChart tickets={slaEligibleTickets} dateRange={dateRange} />
             <TicketsByCampusChart tickets={performanceFilteredTickets || []} />
             {(userProfile?.role === 'Admin' || userProfile?.role === 'Manager') && (
               <>

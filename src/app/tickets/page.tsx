@@ -43,6 +43,10 @@ const toDate = (ts: any): Date | null => {
   }
 };
 
+// Keep excluded tickets in the normal All Tickets list, but not in SLA-filtered results.
+const isSLAExcludedStatus = (status: TicketStatus): boolean =>
+  status === 'Duplicate' || String(status) === 'Ignored';
+
 const TICKETS_FILTER_STORAGE_KEY = 'nis_tickets_filter_state_v2';
 const TICKETS_COLUMNS_STORAGE_KEY = 'nis_tickets_visible_columns_v2';
 
@@ -472,6 +476,9 @@ function TicketsContent() {
     }
     if (filters.sla !== 'all') {
       result = result.filter(t => {
+        // Excluded statuses must never appear in breached or at-risk SLA filters.
+        if (isSLAExcludedStatus(t.status)) return false;
+
         // MATCH BADGE LOGIC: Start from assignedAt
         const start = toDate(t.assignedAt || t.createdAt);
         // Only assigned tickets contribute to SLA stats in the list
@@ -502,29 +509,22 @@ function TicketsContent() {
         const compareTime = finishedAt || responded || now;
         const workingHoursElapsed = calculateWorkingHoursElapsed(start, compareTime, dept?.workingHours);
 
-      // Duplicate tickets are excluded from SLA filters
-if (t.status === 'Duplicate') {
-    return false;
-}
-
-if (filters.sla === 'breached') {
-    return workingHoursElapsed >= limitHours;
-}
-
-if (filters.sla === 'at-risk') {
-    if (finishedAt || responded) return false;
-    const hoursRemaining = limitHours - workingHoursElapsed;
-    return hoursRemaining > 0 && hoursRemaining <= 2;
-}
-
-return true;
+        if (filters.sla === 'breached') {
+          return workingHoursElapsed >= limitHours;
+        }
+        if (filters.sla === 'at-risk') {
+          if (finishedAt || responded) return false;
+          const hoursRemaining = limitHours - workingHoursElapsed;
+          return hoursRemaining > 0 && hoursRemaining <= 2;
+        }
+        return true;
       });
     }
     return result;
   };
 
   const statusCounts = useMemo(() => {
-    if (!roleFilteredTickets) return { all: 0, Open: 0, 'In Progress': 0, Resolved: 0, Closed: 0, Queue: 0, Duplicate: 0, Waiting: 0 };
+    if (!roleFilteredTickets) return { all: 0, Open: 0, 'In Progress': 0, Resolved: 0, Closed: 0, Queue: 0, Duplicate: 0, Ignored: 0, Waiting: 0 };
     const base = applyFilters(roleFilteredTickets);
     return {
       all: base.length,
@@ -534,6 +534,7 @@ return true;
       Closed: base.filter(t => (t.status || '').toLowerCase() === 'closed').length,
       Queue: base.filter(t => (t.status || '').toLowerCase() === 'queue').length,
       Duplicate: base.filter(t => (t.status || '').toLowerCase() === 'duplicate').length,
+      Ignored: base.filter(t => (t.status || '').toLowerCase() === 'ignored').length,
       Waiting: base.filter(t => (t.status || '').toLowerCase() === 'waiting').length,
     };
   }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
