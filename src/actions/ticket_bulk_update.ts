@@ -120,7 +120,15 @@ export async function bulkUpdateTicketsAction(
         const ticketData = ticketDoc.data() || {};
         const currentStatus = (ticketData.status || 'Open') as TicketStatus;
         const finalUpdates = { ...updatesPayload };
-
+// When assigning an employee, move Queue tickets to Open.
+// Keep all other ticket statuses unchanged.
+if (
+  assigneeId &&
+  assigneeId !== 'unassigned' &&
+  currentStatus === 'Queue'
+) {
+  finalUpdates.status = 'Open';
+}
         // Explicit status updates always win; unassigning sets Queue.
         // Assigning a person alone must not reopen Ignored/Duplicate/finished tickets.
         const targetStatus = (finalUpdates.status || currentStatus) as TicketStatus;
