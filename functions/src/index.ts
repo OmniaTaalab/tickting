@@ -3353,7 +3353,7 @@ export const {
 
 export const staging = makeTicketEmailFunctions({
     database: "staging",
-    baseUrl: "https://studio-staging--studio-7708718228-149dc.us-central1.hosted.app",
+    baseUrl: "https://staging-tickting--studio-7708718228-149dc.us-central1.hosted.app",
     redirectTo: process.env.STAGING_EMAIL_REDIRECT_TO,
     requireRedirect: true,
 });
