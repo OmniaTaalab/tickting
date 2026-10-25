@@ -1,5 +1,8 @@
 import admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import 'dotenv/config';
+
+const FIRESTORE_DB_ID = process.env.NEXT_PUBLIC_FIRESTORE_DATABASE_ID || '(default)';
 
 let adminAuth: admin.auth.Auth | null = null;
 let adminStorage: admin.storage.Storage | null = null;
@@ -176,7 +179,7 @@ if (admin.apps.length > 0) {
   }
 
   try {
-    adminDb = admin.firestore();
+    adminDb = getFirestore(admin.app(), FIRESTORE_DB_ID);
 
     // IMPORTANT:
     // Do NOT call adminDb.settings() here.

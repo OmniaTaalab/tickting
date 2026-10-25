@@ -5,24 +5,26 @@ import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { initializeFirestore, getFirestore, Firestore } from 'firebase/firestore';
 
+const FIRESTORE_DB_ID = process.env.NEXT_PUBLIC_FIRESTORE_DATABASE_ID || '(default)';
+
 // IMPORTANT: DO NOT MODIFY THIS FUNCTION
 export function initializeFirebase() {
   if (getApps().length === 0) {
     // Important! initializeApp() is called with the config because this is not
     // a production App Hosting environment.
     const firebaseApp = initializeApp(firebaseConfig);
-    
+
     // Explicitly initialize Firestore with auto-detect long-polling to prevent connection timeouts
     // in proxied or restricted network environments like Firebase Studio.
     const firestore = initializeFirestore(firebaseApp, {
       experimentalAutoDetectLongPolling: true,
-    });
+    }, FIRESTORE_DB_ID);
 
     return getSdks(firebaseApp, firestore);
   } else {
     // If already initialized, return the SDKs with the already initialized App
     const app = getApp();
-    return getSdks(app, getFirestore(app));
+    return getSdks(app, getFirestore(app, FIRESTORE_DB_ID));
   }
 }
 

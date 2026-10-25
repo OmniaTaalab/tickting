@@ -1,0 +1,9 @@
+# Staging overrides merged on top of apphosting.yaml.
+# https://firebase.google.com/docs/app-hosting/multiple-environments
+
+env:
+  - variable: NEXT_PUBLIC_FIRESTORE_DATABASE_ID
+    value: staging
+    availability:
+      - BUILD
+      - RUNTIME
