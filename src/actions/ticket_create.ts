@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { adminDb, adminStorage } from '@/lib/firebaseAdmin';
+import { storagePath } from '@/lib/storage-path';
 import type { TicketStatus, TicketPriority, TicketChannel, Department } from '@/lib/types';
 import { FieldValue } from 'firebase-admin/firestore';
 import { revalidatePath } from 'next/cache';
@@ -124,7 +125,7 @@ export async function createTicketAction(
       const originalFileName = entry.name || 'attachment';
       const safeFileName = originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
       const fileName = `${Date.now()}_${crypto.randomUUID()}_${safeFileName}`;
-      const filePath = `attachments/${fileName}`;
+      const filePath = storagePath(`attachments/${fileName}`);
 
       const bucket = storage.bucket();
       const fileRef = bucket.file(filePath);

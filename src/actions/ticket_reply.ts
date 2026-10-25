@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { adminDb, adminStorage } from '@/lib/firebaseAdmin';
+import { storagePath } from '@/lib/storage-path';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Ticket, UserProfile, TicketStatus } from '@/lib/types';
 import { logSystemEvent } from '@/lib/system-log';
@@ -75,7 +76,7 @@ export async function addTicketReplyAction(
     try {
       const buffer = Buffer.from(await entry.arrayBuffer());
       const fileName = `${Date.now()}_reply_${crypto.randomUUID()}_${entry.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-      const filePath = `attachments/${fileName}`;
+      const filePath = storagePath(`attachments/${fileName}`);
 
       const bucket = storage.bucket();
       const fileRef = bucket.file(filePath);
