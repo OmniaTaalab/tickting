@@ -42,8 +42,14 @@ export interface AutoAssignResult {
  * Never treat an empty employee scope as "all".
  * Verify collection/field names against your Firestore schema before deployment.
  */
+const DEPARTMENT_ONLY_IDS = new Set([
+  'PjGUdEp51xWc0fBKEooa', // General Support
+  '4K7BgUVmGi52sqKJNpB1', // Operations
+]);
+
 type ScopeRecord = Record<string, unknown>;
 type ScopeTicket = {
+  departmentId?: string | null;
   campusId?: string | null;
   schoolId?: string | null;
   schoolName?: string | null;
@@ -55,6 +61,7 @@ type ScopeTicket = {
   gradeName?: string | null;
   grade?: string | null;
   grades?: string[];
+  allowedGrades?: string[];
   routingOptions?: Array<{ school?: string; division?: string; grades?: string[] }>;
   mailboxEmail?: string | null;
 };
@@ -116,6 +123,10 @@ async function loadTaxonomy(db: FirebaseFirestore.Firestore): Promise<Taxonomy> 
  * Missing or contradictory ticket attributes must NEVER widen access.
  */
 function agentCoversTicket(agent: ScopeAgent, ticket: ScopeTicket, taxonomy: Taxonomy): boolean {
+  // General Support and Operations have no campus or academic routing restrictions.
+  // Their department is checked by the caller's Firestore query / scope guard.
+  if (ticket.departmentId && DEPARTMENT_ONLY_IDS.has(ticket.departmentId)) return true;
+
   const agentCampuses = textValues(agent.campusIds, agent.campusId);
   if (!ticket.campusId || !agentCampuses.includes(ticket.campusId)) return false;
 
@@ -144,6 +155,17 @@ function agentCoversTicket(agent: ScopeAgent, ticket: ScopeTicket, taxonomy: Tax
   const requestedSchool = ticket.schoolName || ticket.school;
   const requestedDivision = ticket.divisionName || ticket.division;
   const requestedGrade = ticket.gradeName || ticket.grade;
+
+  // Campus-only tickets have no school, division, grade or mailbox-specific route.
+  // They can be assigned to any available, active Employee in the matching
+  // department (checked by callers) and campus (checked above).
+  // Keep strict scope matching whenever the ticket specifies ANY finer scope.
+  const isCampusOnlyTicket =
+    routes.length === 0 &&
+    !textValues(ticket.schoolId, requestedSchool).length &&
+    !textValues(ticket.divisionId, requestedDivision).length &&
+    !textValues(ticket.gradeId, requestedGrade, ticket.grades, ticket.allowedGrades).length;
+  if (isCampusOnlyTicket) return true;
 
   const candidates = routes.filter(route =>
     (!requestedSchool || normalizeScope(route.school) === normalizeScope(requestedSchool)) &&
@@ -185,13 +207,32 @@ export async function employeeCoversTicketScope(
   ticket: ScopeTicket & { departmentId?: string | null }
 ): Promise<boolean> {
   const db = adminDb;
+
   if (!db || !ticket.departmentId) return false;
+
   const snap = await db.collection('users').doc(employeeId).get();
+
   if (!snap.exists) return false;
+
   const data = snap.data() as UserProfile;
-  if (data.role !== 'Employee' || data.departmentId !== ticket.departmentId) return false;
+
+  // Check employee role
+  if (data.role !== 'Employee') return false;
+
+  // Check department
+  if (data.departmentId !== ticket.departmentId) return false;
+
+  // Check availability
+  if (data.status !== 'Available') return false;
+
+  // Check ticket scope
   const taxonomy = await loadTaxonomy(db);
-  return agentCoversTicket(data as ScopeAgent, ticket, taxonomy);
+
+  return agentCoversTicket(
+    data as ScopeAgent,
+    ticket,
+    taxonomy
+  );
 }
 
 /**
@@ -210,6 +251,7 @@ export async function getRoundRobinAssignee(
         divisionName?: string | null;
         gradeName?: string | null;
         grades?: string[];
+        allowedGrades?: string[];
         mailboxEmail?: string | null;
         routingOptions?: ScopeTicket['routingOptions'];
     },
@@ -230,6 +272,7 @@ export async function getRoundRobinAssignee(
     if (typeof departmentIdOrTicket === 'object' && departmentIdOrTicket !== null) {
         departmentId = departmentIdOrTicket.departmentId;
         ticketContext = {
+            departmentId,
             campusId: departmentIdOrTicket.campusId,
             schoolId: departmentIdOrTicket.schoolId,
             divisionId: departmentIdOrTicket.divisionId,
@@ -238,12 +281,13 @@ export async function getRoundRobinAssignee(
             divisionName: departmentIdOrTicket.divisionName,
             gradeName: departmentIdOrTicket.gradeName,
             grades: departmentIdOrTicket.grades,
+            allowedGrades: departmentIdOrTicket.allowedGrades,
             mailboxEmail: departmentIdOrTicket.mailboxEmail,
             routingOptions: departmentIdOrTicket.routingOptions,
         };
     } else {
         departmentId = departmentIdOrTicket;
-        ticketContext = { campusId, schoolId, divisionId, gradeId };
+        ticketContext = { departmentId, campusId, schoolId, divisionId, gradeId };
     }
 
     const deptRef = db.collection('departments').doc(departmentId);

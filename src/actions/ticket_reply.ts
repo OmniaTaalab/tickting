@@ -9,96 +9,6 @@ import { redirect } from 'next/navigation';
 import { getRoundRobinAssignee } from './ticket_assignment';
 import { revalidatePath } from 'next/cache';
 import { generateUniqueTicketNumber } from '@/lib/ticket-number';
-import { isWithinWorkingHours } from '@/lib/working-hours-utils';
-
-// A Queue ticket can only be claimed by a matching, online Academic employee.
-// Missing/ambiguous routing information fails closed (ticket remains in Queue).
-const normalizeRouting = (value: unknown): string =>
-  String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z0-9]/g, '');
-
-const strings = (value: unknown): string[] =>
-  (Array.isArray(value) ? value : [value]).filter(
-    (item): item is string => typeof item === 'string' && item.trim().length > 0
-  );
-
-async function employeeCanClaimQueueTicket(
-  db: NonNullable<typeof adminDb>,
-  ticket: Ticket,
-  employee: UserProfile
-): Promise<boolean> {
-  if (employee.role !== 'Employee' || employee.status !== 'Available' || !employee.activeSessionId) return false;
-  if (!ticket.departmentId || employee.departmentId !== ticket.departmentId) return false;
-  if (!ticket.campusId || !strings([employee.campusIds, (employee as any).campusId].flat()).includes(ticket.campusId)) return false;
-
-  const deptDoc = await db.collection('departments').doc(ticket.departmentId).get();
-  if (!deptDoc.exists) return false;
-  const holidays = await db.collection('official_holidays').where('isActive', '==', true).get();
-  const activeHolidays = holidays.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-  if (!isWithinWorkingHours(deptDoc.data()?.workingHours, new Date(), activeHolidays)) return false;
-
-  const data = ticket as Ticket & {
-    routingOptions?: Array<{ school: string; division: string; grades: string[] }>;
-    grades?: string[];
-    allowedGrades?: string[];
-    school?: string;
-    division?: string;
-    grade?: string;
-  };
-  const routes = Array.isArray(data.routingOptions) ? data.routingOptions : [];
-  const requestedSchool = data.schoolName || data.school;
-  const requestedDivision = data.divisionName || data.division;
-  const requestedGrade = data.gradeName || data.grade;
-  const candidates = routes.filter(route =>
-    (!requestedSchool || normalizeRouting(route.school) === normalizeRouting(requestedSchool)) &&
-    (!requestedDivision || normalizeRouting(route.division) === normalizeRouting(requestedDivision)) &&
-    (!requestedGrade || strings(route.grades).some(g => normalizeRouting(g) === normalizeRouting(requestedGrade)))
-  );
-  // Multiple routes are only safe when one route is uniquely identified.
-  if (routes.length > 0 && candidates.length !== 1) return false;
-  const route = candidates[0];
-
-  const matchScope = async (
-    collection: string, employeeIds: unknown, ticketId: unknown, targetName: unknown
-  ): Promise<boolean> => {
-    const ids = strings(employeeIds);
-    const id = typeof ticketId === 'string' ? ticketId : '';
-    const name = normalizeRouting(targetName);
-    if (!id && !name) return false;
-    if (id) {
-      if (!ids.includes(id)) return false;
-      // If both are supplied, ensure they refer to the same taxonomy item.
-      if (name) {
-        const doc = await db.collection(collection).doc(id).get();
-        if (!doc.exists) return false;
-        const record = doc.data() || {};
-        if (![record.name, record.nameEn, record.label, record.title, record.code, record.displayName]
-          .some(value => value && normalizeRouting(value) === name)) return false;
-      }
-      return true;
-    }
-    if (!ids.length) return false;
-    const matches = await Promise.all(ids.map(agentId => db.collection(collection).doc(agentId).get()));
-    return matches.some(doc => doc.exists &&
-      Object.entries(doc.data() || {}).some(([key, value]) =>
-        ['name', 'nameEn', 'label', 'title', 'code', 'displayName'].includes(key) &&
-        typeof value === 'string' && normalizeRouting(value) === name));
-  };
-
-  if (!await matchScope('schools', employee.schoolIds, data.schoolId, requestedSchool || route?.school)) return false;
-  if (!await matchScope('divisions', employee.divisionIds, data.divisionId, requestedDivision || route?.division)) return false;
-
-  if (data.gradeId) {
-    return matchScope('grades', employee.gradeIds, data.gradeId, requestedGrade);
-  }
-  const allowedGrades = requestedGrade ? [requestedGrade] :
-    route ? route.grades : (data.allowedGrades?.length ? data.allowedGrades : data.grades || []);
-  if (!allowedGrades.length) return false;
-  for (const grade of allowedGrades) {
-    if (await matchScope('grades', employee.gradeIds, null, grade)) return true;
-  }
-  return false;
-}
 
 const AddReplySchema = z.object({
   ticketId: z.string().min(1, "Ticket ID is required"),
@@ -278,7 +188,6 @@ export async function addTicketReplyAction(
         }
     } else {
         let replierName = 'User';
-        let canClaimQueuedTicket = false;
         let replierAvatar = `https://api.dicebear.com/9.x/initials/svg?seed=U&backgroundColor=1e40af`;
         let replierEmail = '';
         const isExternal = userId.startsWith('anon_') || userId.startsWith('email_');
@@ -301,16 +210,9 @@ export async function addTicketReplyAction(
                 replierName = profile.name;
                 replierAvatar = profile.avatarUrl;
                 replierEmail = profile.email;
-                if (ticketData.status === 'Queue' && !isInternal) {
-                    canClaimQueuedTicket = await employeeCanClaimQueueTicket(db, ticketData, profile);
-                    if (!canClaimQueuedTicket) {
-                        return { success: false, message: 'You cannot claim this Queue ticket: scope, availability, or working hours do not match.', errors: { form: ['This Queue ticket is outside your eligible scope or working hours.'] } };
-                    }
-                }
-
                 // Read-only check for transferred tickets:
                 // If the user is not an Admin, they can only reply if their department owns the ticket
-                if (profile.role !== 'Admin') {
+                if (profile.role !== 'Admin' && ticketData.status !== 'Queue') {
                     if (ticketData.departmentId && profile.departmentId !== ticketData.departmentId) {
                         return {
                             errors: { form: [`Permission denied: This ticket has been transferred to ${ticketData.departmentName || 'another department'}. Transferred tickets are read-only.`] },
@@ -344,14 +246,14 @@ export async function addTicketReplyAction(
 
         if (!isInternal) {
             // SPECIFIC REQUIREMENT: If ticket is QUEUE and any employee replies, auto-assign it.
-            if (ticketData.status === 'Queue' && !isExternal && canClaimQueuedTicket) {
+            if (ticketData.status === 'Queue' && !isExternal) {
                 updates.assignedTo = {
                     userId: userId,
                     name: replierName,
                     email: replierEmail,
                     avatarUrl: replierAvatar,
                 };
-                updates.status = 'Waiting'; // Moves from Queue to Waiting (waiting for parent now)
+                updates.status = 'Open'; // Queue -> Open and assigned to the replying staff member
             } else {
                 if (ticketData.status === 'Queue' && isExternal) {
                     updates.status = 'Queue'; // Stay in queue if parent replies before assignment
@@ -382,7 +284,7 @@ export async function addTicketReplyAction(
         });
 
         // Notify current assignee or log the auto-assignment
-        if (ticketData.status === 'Queue' && !isExternal && !isInternal && canClaimQueuedTicket) {
+        if (ticketData.status === 'Queue' && !isExternal && !isInternal) {
              await logSystemEvent({
                 eventType: 'TICKET_AUTO_ASSIGNED',
                 actor: { userId, name: replierName },

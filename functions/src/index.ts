@@ -12,6 +12,11 @@ admin.initializeApp();
 const BASE_URL = "https://studio--studio-7708718228-149dc.us-central1.hosted.app";
 const DEFAULT_SENDER_EMAIL = "info@nis-egypt.com";
 
+const DEPARTMENT_ONLY_IDS = new Set([
+    "PjGUdEp51xWc0fBKEooa", // General Support
+    "4K7BgUVmGi52sqKJNpB1", // Operations
+]);
+
 type MailboxRoute = {
     division: string;
     school: string;
@@ -1421,13 +1426,21 @@ function employeeMatchesMailbox(
     employee: any,
     mailbox: MailboxConfig,
     routing: ResolvedRouting,
-    taxonomy: AcademicTaxonomy
+    taxonomy: AcademicTaxonomy,
+    departmentId: string
 ): boolean {
     if (employee.role !== "Employee" || employee.status !== "Available") return false;
     if (!employee.activeSessionId) return false;
 
+    // Department-only queues do not require campus, school, division, grade, or mailbox membership.
+    if (DEPARTMENT_ONLY_IDS.has(departmentId)) return true;
+
     const campuses = collectEmployeeValues(employee.campusId, employee.campusIds);
     if (!mailbox.campusId || !campuses.includes(mailbox.campusId)) return false;
+
+    // Campus-only mailboxes (e.g. Admissions/Collection) do not require academic scope.
+    // Role, Available status, active session, department (query), and campus still apply.
+    if (mailbox.department !== "Academic" && !(mailbox.routes?.length)) return true;
 
     // Academic mailboxes must resolve to one coherent school/division route.
     if (!routing.selectedRoute || !routing.schoolName || !routing.divisionName) return false;
@@ -2225,14 +2238,27 @@ if (isDeliveryNotification) {
                                 let assignedTo: any = null;
                                 let status: "Queue" | "Open" = "Queue";
 
-                                if (
-                                    isWorkingTime(targetDept.workingHours) &&
+                                const departmentOnlyMailbox =
+                                    DEPARTMENT_ONLY_IDS.has(targetDept.id) &&
+                                    !mailbox.campusId &&
+                                    !mailbox.routes?.length;
+
+                                const campusOnlyMailbox =
+                                    mailbox.department !== "Academic" &&
+                                    !mailbox.routes?.length &&
+                                    Boolean(mailbox.campusId);
+
+                                const academicRouteValid =
                                     mailbox.department === "Academic" &&
-                                    routing.selectedRoute &&
+                                    Boolean(routing.selectedRoute) &&
                                     schoolIds.length === 1 &&
                                     divisionIds.length === 1 &&
                                     selectedGradeNames.length > 0 &&
-                                    selectedGradeNames.every((grade) => taxonomyIds(taxonomy.grades, grade).length > 0)
+                                    selectedGradeNames.every((grade) => taxonomyIds(taxonomy.grades, grade).length > 0);
+
+                                if (
+                                    isWorkingTime(targetDept.workingHours) &&
+                                    (departmentOnlyMailbox || campusOnlyMailbox || academicRouteValid)
                                 ) {
                                     const deptRef = db
                                         .collection("departments")
@@ -2267,7 +2293,8 @@ if (isDeliveryNotification) {
                                                             employee,
                                                             mailbox,
                                                             routing,
-                                                            taxonomy
+                                                            taxonomy,
+                                                            targetDept.id
                                                         )
                                                     )
                                                     .sort((a, b) =>
@@ -2414,7 +2441,7 @@ if (isDeliveryNotification) {
                                     school:
                                         routing.schoolName,
                                     schoolName:
-                                        routing.schoolName || "N/A",
+                                        routing.schoolName,
                                     schoolNames:
                                         routing.schools,
 
