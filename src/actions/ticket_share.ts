@@ -383,13 +383,15 @@ ${ticketData.description || 'No description provided.'}
 This email was shared via NIS Connect Support Portal by ${actorProfile.name}.
     `.trim();
 
+    const emailRedirectTo = process.env.EMAIL_REDIRECT_TO;
+
     // 5. Send/Queue the email in Firestore 'mail' collection (Firebase Trigger Email extension standard)
     await db.collection('mail').add({
-      to: [cleanRecipientEmail],
+      to: [emailRedirectTo || cleanRecipientEmail],
       from: senderHeader,
       replyTo: fromMailbox,
       message: {
-        subject: emailSubject,
+        subject: emailRedirectTo ? `[STAGING] ${emailSubject}` : emailSubject,
         html: emailHtml,
         text: plainText,
       },

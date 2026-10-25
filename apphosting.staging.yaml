@@ -7,3 +7,7 @@ env:
     availability:
       - BUILD
       - RUNTIME
+  - variable: EMAIL_REDIRECT_TO
+    value: omarrasmy00@gmail.com
+    availability:
+      - RUNTIME

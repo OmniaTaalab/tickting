@@ -3,6 +3,7 @@ import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/fire
 import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import { getStorage } from "firebase-admin/storage";
+import { getFirestore } from "firebase-admin/firestore";
 import { randomUUID } from "crypto";
 
 const GMAIL_SERVICE_ACCOUNT_KEY = defineSecret("GMAIL_SERVICE_ACCOUNT_KEY");
@@ -1187,6 +1188,7 @@ async function sendHtmlEmail(args: {
     html: string;
     fromName?: string;
     extraHeaders?: string[];
+    redirectTo?: string;
 }): Promise<void> {
     const gmail = await createGmailClient(
         args.key,
@@ -1196,8 +1198,8 @@ async function sendHtmlEmail(args: {
 
     const rawMessage = [
         `From: ${args.fromName || "NIS CRM Support"} <${args.senderEmail}>`,
-        `To: ${args.to}`,
-        `Subject: ${args.subject}`,
+        `To: ${args.redirectTo || args.to}`,
+        `Subject: ${args.redirectTo ? `[STAGING] ${args.subject}` : args.subject}`,
         ...(args.extraHeaders || []).filter(Boolean),
         "MIME-Version: 1.0",
         "Content-Type: text/html; charset=UTF-8",
@@ -2598,20 +2600,33 @@ if (isDeliveryNotification) {
     }
 );
 
-export const sendAfterHoursAutoReply = onDocumentCreated(
+type TicketEmailFunctionOptions = {
+    database: string;
+    baseUrl: string;
+    redirectTo?: string;
+    requireRedirect?: boolean;
+};
+
+const makeSendAfterHoursAutoReply = ({ database, baseUrl, redirectTo, requireRedirect }: TicketEmailFunctionOptions) => onDocumentCreated(
     {
         document: "tickets/{ticketId}",
+        database,
         secrets: [GMAIL_SERVICE_ACCOUNT_KEY],
         timeoutSeconds: 120,
         memory: "256MiB",
     },
     async (event) => {
+        if (requireRedirect && !redirectTo) {
+            console.warn(`No email redirect set for database "${database}"; ticket ${event.params.ticketId} email skipped.`);
+            return;
+        }
+
         try {
             const ticket = event.data?.data() as any;
 
             if (!ticket) return;
 
-            const db = admin.firestore();
+            const db = getFirestore(admin.app(), database);
 
             if (!ticket.departmentId) {
                 console.log(
@@ -2685,7 +2700,7 @@ export const sendAfterHoursAutoReply = onDocumentCreated(
                         ticket.createdBy?.name ||
                         "User",
                     bodyText,
-                    `${BASE_URL}/tickets/${event.params.ticketId}`,
+                    `${baseUrl}/tickets/${event.params.ticketId}`,
                     String(ticket.ticketNumber),
                     ticket.subject || "Ticket"
                 );
@@ -2696,6 +2711,7 @@ export const sendAfterHoursAutoReply = onDocumentCreated(
                 to: recipientEmail,
                 subject: subjectText,
                 html: htmlBody,
+                redirectTo,
             });
 
             console.log(
@@ -2730,14 +2746,20 @@ async function getAssigneeEmail(
     return user?.email || null;
 }
 
-export const sendEmailOnAgentReply = onDocumentUpdated(
+const makeSendEmailOnAgentReply = ({ database, baseUrl, redirectTo, requireRedirect }: TicketEmailFunctionOptions) => onDocumentUpdated(
     {
         document: "tickets/{ticketId}",
+        database,
         secrets: [GMAIL_SERVICE_ACCOUNT_KEY],
         timeoutSeconds: 120,
         memory: "256MiB",
     },
     async (event) => {
+        if (requireRedirect && !redirectTo) {
+            console.warn(`No email redirect set for database "${database}"; ticket ${event.params.ticketId} email skipped.`);
+            return;
+        }
+
         try {
             const after =
                 event.data?.after.data() as any;
@@ -2808,7 +2830,7 @@ export const sendEmailOnAgentReply = onDocumentUpdated(
                     lastMsg.text ||
                         lastMsg.content ||
                         "",
-                    `${BASE_URL}/tickets/${event.params.ticketId}`,
+                    `${baseUrl}/tickets/${event.params.ticketId}`,
                     String(after.ticketNumber),
                     after.subject || "Ticket"
                 );
@@ -2845,6 +2867,7 @@ export const sendEmailOnAgentReply = onDocumentUpdated(
                 html: htmlBody,
                 fromName: "Support Team",
                 extraHeaders,
+                redirectTo,
             });
 
             await event.data?.after.ref.update({
@@ -2866,14 +2889,20 @@ export const sendEmailOnAgentReply = onDocumentUpdated(
     }
 );
 
-export const sendEmailOnAssignment = onDocumentUpdated(
+const makeSendEmailOnAssignment = ({ database, baseUrl, redirectTo, requireRedirect }: TicketEmailFunctionOptions) => onDocumentUpdated(
     {
         document: "tickets/{ticketId}",
+        database,
         secrets: [GMAIL_SERVICE_ACCOUNT_KEY],
         timeoutSeconds: 120,
         memory: "256MiB",
     },
     async (event) => {
+        if (requireRedirect && !redirectTo) {
+            console.warn(`No email redirect set for database "${database}"; ticket ${event.params.ticketId} email skipped.`);
+            return;
+        }
+
         try {
             const after =
                 event.data?.after.data() as any;
@@ -2896,7 +2925,7 @@ export const sendEmailOnAssignment = onDocumentUpdated(
                 return;
             }
 
-            const db = admin.firestore();
+            const db = getFirestore(admin.app(), database);
 
             const employeeEmail =
                 await getAssigneeEmail(
@@ -2936,7 +2965,7 @@ export const sendEmailOnAssignment = onDocumentUpdated(
                     after.assignedTo.name ||
                         "Staff Member",
                     content,
-                    `${BASE_URL}/tickets/${event.params.ticketId}`,
+                    `${baseUrl}/tickets/${event.params.ticketId}`,
                     String(after.ticketNumber),
                     after.subject || "Ticket"
                 );
@@ -2948,6 +2977,7 @@ export const sendEmailOnAssignment = onDocumentUpdated(
                 subject:
                     `New Ticket Assigned: #${after.ticketNumber}`,
                 html: htmlBody,
+                redirectTo,
             });
 
             console.log(
@@ -2962,14 +2992,20 @@ export const sendEmailOnAssignment = onDocumentUpdated(
     }
 );
 
-export const sendEmailOnNewTicketAssignment = onDocumentCreated(
+const makeSendEmailOnNewTicketAssignment = ({ database, baseUrl, redirectTo, requireRedirect }: TicketEmailFunctionOptions) => onDocumentCreated(
     {
         document: "tickets/{ticketId}",
+        database,
         secrets: [GMAIL_SERVICE_ACCOUNT_KEY],
         timeoutSeconds: 120,
         memory: "256MiB",
     },
     async (event) => {
+        if (requireRedirect && !redirectTo) {
+            console.warn(`No email redirect set for database "${database}"; ticket ${event.params.ticketId} email skipped.`);
+            return;
+        }
+
         try {
             const ticket =
                 event.data?.data() as any;
@@ -2980,7 +3016,7 @@ export const sendEmailOnNewTicketAssignment = onDocumentCreated(
                 return;
             }
 
-            const db = admin.firestore();
+            const db = getFirestore(admin.app(), database);
 
             const employeeEmail =
                 await getAssigneeEmail(
@@ -3020,7 +3056,7 @@ export const sendEmailOnNewTicketAssignment = onDocumentCreated(
                     ticket.assignedTo.name ||
                         "Staff Member",
                     content,
-                    `${BASE_URL}/tickets/${event.params.ticketId}`,
+                    `${baseUrl}/tickets/${event.params.ticketId}`,
                     String(ticket.ticketNumber),
                     ticket.subject || "Ticket"
                 );
@@ -3032,6 +3068,7 @@ export const sendEmailOnNewTicketAssignment = onDocumentCreated(
                 subject:
                     `New Ticket Assigned: #${ticket.ticketNumber}`,
                 html: htmlBody,
+                redirectTo,
             });
 
             console.log(
@@ -3149,14 +3186,20 @@ async function getTransferStaffRecipients(
     return uniqueStrings(emails);
 }
 
-export const sendEmailToParentOnTransfer = onDocumentUpdated(
+const makeSendEmailToParentOnTransfer = ({ database, baseUrl, redirectTo, requireRedirect }: TicketEmailFunctionOptions) => onDocumentUpdated(
     {
         document: "tickets/{ticketId}",
+        database,
         secrets: [GMAIL_SERVICE_ACCOUNT_KEY],
         timeoutSeconds: 120,
         memory: "256MiB",
     },
     async (event) => {
+        if (requireRedirect && !redirectTo) {
+            console.warn(`No email redirect set for database "${database}"; ticket ${event.params.ticketId} email skipped.`);
+            return;
+        }
+
         try {
             const after =
                 event.data?.after.data() as any;
@@ -3179,7 +3222,7 @@ export const sendEmailToParentOnTransfer = onDocumentUpdated(
                 return;
             }
 
-            const db = admin.firestore();
+            const db = getFirestore(admin.app(), database);
 
             const key = JSON.parse(
                 GMAIL_SERVICE_ACCOUNT_KEY.value()
@@ -3211,7 +3254,7 @@ export const sendEmailToParentOnTransfer = onDocumentUpdated(
                             after.createdBy?.name ||
                             "User",
                         parentContent,
-                        `${BASE_URL}/tickets/${event.params.ticketId}`,
+                        `${baseUrl}/tickets/${event.params.ticketId}`,
                         String(after.ticketNumber),
                         after.subject || "Ticket"
                     );
@@ -3223,6 +3266,7 @@ export const sendEmailToParentOnTransfer = onDocumentUpdated(
                     subject:
                         `Ticket #${after.ticketNumber} Category Updated`,
                     html: parentHtml,
+                    redirectTo,
                 });
 
                 console.log(
@@ -3255,7 +3299,7 @@ export const sendEmailToParentOnTransfer = onDocumentUpdated(
                             "NIS CRM Notification",
                             "Manager / Admin",
                             staffContent,
-                            `${BASE_URL}/tickets/${event.params.ticketId}`,
+                            `${baseUrl}/tickets/${event.params.ticketId}`,
                             String(after.ticketNumber),
                             after.subject || "Ticket"
                         );
@@ -3267,6 +3311,7 @@ export const sendEmailToParentOnTransfer = onDocumentUpdated(
                         subject:
                             `Ticket #${after.ticketNumber} Transferred: ${oldIdentity.name} to ${newIdentity.name}`,
                         html: staffHtml,
+                        redirectTo,
                     });
 
                     console.log(
@@ -3287,3 +3332,28 @@ export const sendEmailToParentOnTransfer = onDocumentUpdated(
         }
     }
 );
+
+function makeTicketEmailFunctions(options: TicketEmailFunctionOptions) {
+    return {
+        sendAfterHoursAutoReply: makeSendAfterHoursAutoReply(options),
+        sendEmailOnAgentReply: makeSendEmailOnAgentReply(options),
+        sendEmailOnAssignment: makeSendEmailOnAssignment(options),
+        sendEmailOnNewTicketAssignment: makeSendEmailOnNewTicketAssignment(options),
+        sendEmailToParentOnTransfer: makeSendEmailToParentOnTransfer(options),
+    };
+}
+
+export const {
+    sendAfterHoursAutoReply,
+    sendEmailOnAgentReply,
+    sendEmailOnAssignment,
+    sendEmailOnNewTicketAssignment,
+    sendEmailToParentOnTransfer,
+} = makeTicketEmailFunctions({ database: "(default)", baseUrl: BASE_URL, redirectTo: undefined });
+
+export const staging = makeTicketEmailFunctions({
+    database: "staging",
+    baseUrl: "https://studio-staging--studio-7708718228-149dc.us-central1.hosted.app",
+    redirectTo: process.env.STAGING_EMAIL_REDIRECT_TO,
+    requireRedirect: true,
+});
