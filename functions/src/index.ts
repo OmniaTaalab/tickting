@@ -67,10 +67,8 @@ const ALL_SCHOOL_NAMES = [
 ];
 
 const ALL_DIVISION_NAMES = [
-    "American Academic Dean", "British Academic Dean", "Dean of Students",
-    "Director's Office", "Early Years", "Elementary School",
-    "High School", "International Baccalaureate", "Lower Secondary",
-    "Middle School", "Primary School", "Upper Secondary",
+    "Academic Dean's Office", "Director's Office", "Early Years",
+    "Elementary", "High School", "Middle School",
 ];
 
 const ALL_GRADE_NAMES = [
@@ -80,10 +78,12 @@ const ALL_GRADE_NAMES = [
     ...Array.from({ length: 13 }, (_, i) => `Year${i + 1}`),
 ];
 
-// El-Sherouk IB grades (CRM_Academic_Division_Updated_2). The IB school uses
-// the existing "IB" settings record. These grade names must be added in CRM
-// Settings > Grades or IB tickets stay in Queue.
+// El-Sherouk only (CRM_Academic_Division_Updated_2): the IB school and its
+// grades. CRM Settings must contain these exact names (plus Lower Primary,
+// Upper Primary, Lower Secondary, Upper Secondary) or tickets stay in Queue.
+const SHOROUK_IB_SCHOOL = "Int'l Bac";
 const SHOROUK_IB_GRADES = ["FP1", "FP2", "DP1", "DP2"];
+const SHOROUK_ALL_SCHOOL_NAMES = [...ALL_SCHOOL_NAMES, SHOROUK_IB_SCHOOL];
 const SHOROUK_ALL_GRADE_NAMES = [...ALL_GRADE_NAMES, ...SHOROUK_IB_GRADES];
 
 const MAILBOXES: MailboxConfig[] = [
@@ -214,7 +214,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [{
             school: "American",
-            division: "American Academic Dean",
+            division: "Academic Dean's Office",
             grades: Array.from({ length: 12 }, (_, i) => `Grade${i + 1}`),
         }]
     ),
@@ -252,7 +252,7 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital International",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "British",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -291,7 +291,7 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital International",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
@@ -350,7 +350,7 @@ const MAILBOXES: MailboxConfig[] = [
             {
                 division: "Early Years",
                 school: "National English",
-                grades: ["KG1", "KG2"],
+                grades: ["Pre school", "KG1", "KG2"],
             }
         ]
     ),
@@ -361,25 +361,30 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital National",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National English",
-                grades: ["Grade1", "Grade2"],
+                grades: ["Grade1", "Grade2", "Grade3"],
             }
         ]
     ),
 
-    academicMailbox(
+    // Not in CRM_Academic_Division_Updated_2: disabled, Grade3-4 now go to
+    // lowerprimary.ncn / upperprimary.ncn.
+    {
+        ...academicMailbox(
         "primary.ncn@nis-egypt.com",
         "NySuXzwGRFnLiO3pAxie",
         "New Capital National",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National English",
                 grades: ["Grade3", "Grade4"],
             }
         ]
-    ),
+        ),
+        enabled: false,
+    },
 
     academicMailbox(
         "upperprimary.ncn@nis-egypt.com",
@@ -387,9 +392,9 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital National",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National English",
-                grades: ["Grade5", "Grade6"],
+                grades: ["Grade4", "Grade5", "Grade6"],
             }
         ]
     ),
@@ -444,7 +449,7 @@ const MAILBOXES: MailboxConfig[] = [
         "6th October",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "British",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -475,7 +480,7 @@ const MAILBOXES: MailboxConfig[] = [
         "6th October",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
@@ -527,7 +532,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
@@ -592,7 +597,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National French",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -644,7 +649,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National English",
                 grades: ["Grade1", "Grade2", "Grade3"],
             }
@@ -657,7 +662,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National English",
                 grades: ["Grade4", "Grade5", "Grade6"],
             }
@@ -691,11 +696,6 @@ const MAILBOXES: MailboxConfig[] = [
                 division: "Early Years",
                 school: "British",
                 grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            },
-            {
-                division: "Early Years",
-                school: "National French",
-                grades: ["Pre school", "KG1", "KG2"],
             }
         ]
     ),
@@ -706,12 +706,12 @@ const MAILBOXES: MailboxConfig[] = [
         "Porto Said",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             },
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "British",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -724,9 +724,14 @@ const MAILBOXES: MailboxConfig[] = [
         "Porto Said",
         [
             {
-                division: "Elementary School",
-                school: "National French",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
+                division: "Elementary",
+                school: "American",
+                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
+            },
+            {
+                division: "Elementary",
+                school: "British",
+                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
         ]
     ),
@@ -803,7 +808,7 @@ const MAILBOXES: MailboxConfig[] = [
         "El-Sherouk",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
@@ -895,7 +900,7 @@ const MAILBOXES: MailboxConfig[] = [
         [
             {
                 division: "International Baccalaureate",
-                school: "IB",
+                school: SHOROUK_IB_SCHOOL,
                 grades: [...SHOROUK_IB_GRADES],
             }
         ]
@@ -906,7 +911,7 @@ const MAILBOXES: MailboxConfig[] = [
         "dir.shorouk@nis-egypt.com",
         "yo3Wwso55VNU0wG3Oq4S",
         "El-Sherouk",
-        ALL_SCHOOL_NAMES.map((school) => ({
+        SHOROUK_ALL_SCHOOL_NAMES.map((school) => ({
             school,
             division: "Director's Office",
             grades: [...SHOROUK_ALL_GRADE_NAMES],
@@ -921,7 +926,7 @@ const MAILBOXES: MailboxConfig[] = [
             {
                 division: "Early Years",
                 school: "National English",
-                grades: ["KG1", "KG2"],
+                grades: ["Pre school", "KG1", "KG2"],
             }
         ]
     ),
@@ -932,7 +937,7 @@ const MAILBOXES: MailboxConfig[] = [
         "Nasr City",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National English",
                 grades: ["Grade1", "Grade2"],
             }
@@ -945,7 +950,7 @@ const MAILBOXES: MailboxConfig[] = [
         "Nasr City",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National English",
                 grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -958,7 +963,7 @@ const MAILBOXES: MailboxConfig[] = [
         "Nasr City",
         [
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "National English",
                 grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -1028,7 +1033,7 @@ const MAILBOXES: MailboxConfig[] = [
                 grades: ["Foundation Stage 1", "Foundation Stage 2"],
             },
             {
-                division: "Elementary School",
+                division: "Elementary",
                 school: "British",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             },
