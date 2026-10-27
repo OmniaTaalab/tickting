@@ -67,8 +67,10 @@ const ALL_SCHOOL_NAMES = [
 ];
 
 const ALL_DIVISION_NAMES = [
-    "Academic Dean's Office", "Director's Office", "Early Years",
-    "Elementary", "High School", "Middle School",
+    "American Academic Dean", "British Academic Dean", "Dean of Students",
+    "Director's Office", "Early Years", "Elementary School",
+    "High School", "International Baccalaureate", "Lower Secondary",
+    "Middle School", "Primary School", "Upper Secondary",
 ];
 
 const ALL_GRADE_NAMES = [
@@ -77,6 +79,12 @@ const ALL_GRADE_NAMES = [
     ...Array.from({ length: 12 }, (_, i) => `Grade${i + 1}`),
     ...Array.from({ length: 13 }, (_, i) => `Year${i + 1}`),
 ];
+
+// El-Sherouk IB grades (CRM_Academic_Division_Updated_2). The IB school uses
+// the existing "IB" settings record. These grade names must be added in CRM
+// Settings > Grades or IB tickets stay in Queue.
+const SHOROUK_IB_GRADES = ["FP1", "FP2", "DP1", "DP2"];
+const SHOROUK_ALL_GRADE_NAMES = [...ALL_GRADE_NAMES, ...SHOROUK_IB_GRADES];
 
 const MAILBOXES: MailboxConfig[] = [
 
@@ -206,7 +214,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [{
             school: "American",
-            division: "Academic Dean's Office",
+            division: "American Academic Dean",
             grades: Array.from({ length: 12 }, (_, i) => `Grade${i + 1}`),
         }]
     ),
@@ -244,7 +252,7 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital International",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "British",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -283,7 +291,7 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital International",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
@@ -353,7 +361,7 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital National",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National English",
                 grades: ["Grade1", "Grade2"],
             }
@@ -366,7 +374,7 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital National",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National English",
                 grades: ["Grade3", "Grade4"],
             }
@@ -379,7 +387,7 @@ const MAILBOXES: MailboxConfig[] = [
         "New Capital National",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National English",
                 grades: ["Grade5", "Grade6"],
             }
@@ -436,7 +444,7 @@ const MAILBOXES: MailboxConfig[] = [
         "6th October",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "British",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -467,7 +475,7 @@ const MAILBOXES: MailboxConfig[] = [
         "6th October",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
@@ -519,7 +527,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
@@ -584,7 +592,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National French",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -636,7 +644,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National English",
                 grades: ["Grade1", "Grade2", "Grade3"],
             }
@@ -649,7 +657,7 @@ const MAILBOXES: MailboxConfig[] = [
         "1st Settlement",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National English",
                 grades: ["Grade4", "Grade5", "Grade6"],
             }
@@ -698,12 +706,12 @@ const MAILBOXES: MailboxConfig[] = [
         "Porto Said",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             },
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "British",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -716,7 +724,7 @@ const MAILBOXES: MailboxConfig[] = [
         "Porto Said",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National French",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -775,6 +783,7 @@ const MAILBOXES: MailboxConfig[] = [
         ]
     ),
 
+    // El-Sherouk academic queues (CRM_Academic_Division_Updated_2).
     academicMailbox(
         "ey.shorouk@nis-egypt.com",
         "yo3Wwso55VNU0wG3Oq4S",
@@ -784,11 +793,6 @@ const MAILBOXES: MailboxConfig[] = [
                 division: "Early Years",
                 school: "American",
                 grades: ["Pre school", "KG1", "KG2"],
-            },
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
             }
         ]
     ),
@@ -799,7 +803,7 @@ const MAILBOXES: MailboxConfig[] = [
         "El-Sherouk",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "American",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
             }
@@ -838,7 +842,7 @@ const MAILBOXES: MailboxConfig[] = [
         "El-Sherouk",
         [
             {
-                division: "Elementary",
+                division: "Lower Primary",
                 school: "British",
                 grades: ["Grade1", "Grade2"],
             }
@@ -851,7 +855,7 @@ const MAILBOXES: MailboxConfig[] = [
         "El-Sherouk",
         [
             {
-                division: "Elementary",
+                division: "Upper Primary",
                 school: "British",
                 grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -864,7 +868,7 @@ const MAILBOXES: MailboxConfig[] = [
         "El-Sherouk",
         [
             {
-                division: "Middle School",
+                division: "Lower Secondary",
                 school: "British",
                 grades: ["Grade7", "Grade8", "Grade9"],
             }
@@ -877,11 +881,36 @@ const MAILBOXES: MailboxConfig[] = [
         "El-Sherouk",
         [
             {
-                division: "High School",
+                division: "Upper Secondary",
                 school: "British",
                 grades: ["Grade10", "Grade11", "Grade12"],
             }
         ]
+    ),
+
+    academicMailbox(
+        "ib.shorouk@nis-egypt.com",
+        "yo3Wwso55VNU0wG3Oq4S",
+        "El-Sherouk",
+        [
+            {
+                division: "International Baccalaureate",
+                school: "IB",
+                grades: [...SHOROUK_IB_GRADES],
+            }
+        ]
+    ),
+
+    // Director's Office: every school and grade on the El-Sherouk campus.
+    academicMailbox(
+        "dir.shorouk@nis-egypt.com",
+        "yo3Wwso55VNU0wG3Oq4S",
+        "El-Sherouk",
+        ALL_SCHOOL_NAMES.map((school) => ({
+            school,
+            division: "Director's Office",
+            grades: [...SHOROUK_ALL_GRADE_NAMES],
+        }))
     ),
 
     academicMailbox(
@@ -903,7 +932,7 @@ const MAILBOXES: MailboxConfig[] = [
         "Nasr City",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National English",
                 grades: ["Grade1", "Grade2"],
             }
@@ -916,7 +945,7 @@ const MAILBOXES: MailboxConfig[] = [
         "Nasr City",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National English",
                 grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -929,7 +958,7 @@ const MAILBOXES: MailboxConfig[] = [
         "Nasr City",
         [
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "National English",
                 grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
             }
@@ -999,7 +1028,7 @@ const MAILBOXES: MailboxConfig[] = [
                 grades: ["Foundation Stage 1", "Foundation Stage 2"],
             },
             {
-                division: "Elementary",
+                division: "Elementary School",
                 school: "British",
                 grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
             },
