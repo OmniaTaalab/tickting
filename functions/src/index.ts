@@ -10,7 +10,7 @@ const GMAIL_SERVICE_ACCOUNT_KEY = defineSecret("GMAIL_SERVICE_ACCOUNT_KEY");
 
 admin.initializeApp();
 
-const BASE_URL = "https://studio--studio-7708718228-149dc.us-central1.hosted.app";
+const BASE_URL = "https://crm.nis-egypt.com";
 const DEFAULT_SENDER_EMAIL = "info@nis-egypt.com";
 
 const DEPARTMENT_ONLY_IDS = new Set([
@@ -43,7 +43,7 @@ type ResolvedRouting = {
     allowedGrades: string[];
 };
 
- function academicMailbox(
+function academicMailbox(
     email: string,
     campusId: string,
     campusName: string,
@@ -194,11 +194,11 @@ const MAILBOXES: MailboxConfig[] = [
         department: "General support",
         enabled: true,
     },
-{
-    email:"Admission@nis-egypt.com",
-    department: "General support",
-    enabled:true,
-},
+    {
+        email: "Admission@nis-egypt.com",
+        department: "General support",
+        enabled: true,
+    },
     // Added academic mailboxes: 1st Settlement and Porto Said.
     // Do not use the literal values "Both", "All" or "All School" as taxonomy names.
     academicMailbox(
@@ -1016,7 +1016,7 @@ const MAILBOXES: MailboxConfig[] = [
             }
         ]
     )
- ];
+];
 
 function normalizeMessageId(value?: string | null): string | null {
     if (!value) return null;
@@ -1330,7 +1330,7 @@ function resolveMailboxRouting(
             (divisions.length === 1 ? divisions[0] : null),
         gradeName:
             matchedGrades.length === 1 &&
-            selectedRoute?.grades.some((g) => normalizeRoutingText(g) === normalizeRoutingText(matchedGrades[0]))
+                selectedRoute?.grades.some((g) => normalizeRoutingText(g) === normalizeRoutingText(matchedGrades[0]))
                 ? matchedGrades[0] : null,
         schools,
         divisions,
@@ -1997,37 +1997,37 @@ export const syncEmails = onSchedule(
                                         .replace(/"/g, "")
                                         .trim() || senderEmail;
 
-const normalizedSubject = subject.toLowerCase().trim();
-const normalizedSender = senderEmail.toLowerCase().trim();
+                                const normalizedSubject = subject.toLowerCase().trim();
+                                const normalizedSender = senderEmail.toLowerCase().trim();
 
-const isDeliveryNotification =
-    normalizedSubject.includes("delivery status notification") ||
-    normalizedSubject.includes("delivery status notification (failure)") ||
-    normalizedSubject.includes("undelivered mail returned to sender") ||
-    normalizedSubject.includes("mail delivery failed") ||
-    normalizedSubject.includes("delivery failure") ||
-    normalizedSender.startsWith("mailer-daemon@") ||
-    normalizedSender.startsWith("postmaster@");
+                                const isDeliveryNotification =
+                                    normalizedSubject.includes("delivery status notification") ||
+                                    normalizedSubject.includes("delivery status notification (failure)") ||
+                                    normalizedSubject.includes("undelivered mail returned to sender") ||
+                                    normalizedSubject.includes("mail delivery failed") ||
+                                    normalizedSubject.includes("delivery failure") ||
+                                    normalizedSender.startsWith("mailer-daemon@") ||
+                                    normalizedSender.startsWith("postmaster@");
 
-if (isDeliveryNotification) {
-    console.log(
-        `SKIPPING DELIVERY NOTIFICATION: ${subject} from ${senderEmail}`
-    );
+                                if (isDeliveryNotification) {
+                                    console.log(
+                                        `SKIPPING DELIVERY NOTIFICATION: ${subject} from ${senderEmail}`
+                                    );
 
-    await processedRef.set(
-        {
-            status: "completed",
-            skipped: true,
-            reason: "delivery-notification",
-            mailbox: mailbox.email,
-            processedAt:
-                admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-    );
+                                    await processedRef.set(
+                                        {
+                                            status: "completed",
+                                            skipped: true,
+                                            reason: "delivery-notification",
+                                            mailbox: mailbox.email,
+                                            processedAt:
+                                                admin.firestore.FieldValue.serverTimestamp(),
+                                        },
+                                        { merge: true }
+                                    );
 
-    continue;
-}
+                                    continue;
+                                }
 
                                 if (
                                     senderEmail.toLowerCase() ===
@@ -2227,8 +2227,8 @@ if (isDeliveryNotification) {
                                     : [];
                                 if (mailbox.department === "Academic" &&
                                     (!routing.selectedRoute || schoolIds.length !== 1 || divisionIds.length !== 1 ||
-                                     !selectedGradeNames.length ||
-                                     selectedGradeNames.some((grade) => !taxonomyIds(taxonomy.grades, grade).length))) {
+                                        !selectedGradeNames.length ||
+                                        selectedGradeNames.some((grade) => !taxonomyIds(taxonomy.grades, grade).length))) {
                                     console.warn("ACADEMIC ROUTING INCOMPLETE: ticket will remain in Queue", {
                                         mailbox: mailbox.email,
                                         school: routing.schoolName,
@@ -2317,13 +2317,12 @@ if (isDeliveryNotification) {
 
                                                 const assignmentKey =
                                                     mailbox.department ===
-                                                    "Academic"
-                                                        ? `${
-                                                              mailbox.campusId ||
-                                                              "all"
-                                                          }_${safeMailbox}`
+                                                        "Academic"
+                                                        ? `${mailbox.campusId ||
+                                                        "all"
+                                                        }_${safeMailbox}`
                                                         : mailbox.campusId ||
-                                                          "all";
+                                                        "all";
 
                                                 const lastIdx =
                                                     (
@@ -2471,17 +2470,17 @@ if (isDeliveryNotification) {
 
                                     assignedTo: assignedTo
                                         ? {
-                                              userId:
-                                                  assignedTo.id,
-                                              name:
-                                                  assignedTo.name,
-                                              email:
-                                                  assignedTo.email ||
-                                                  "",
-                                              avatarUrl:
-                                                  assignedTo.avatarUrl ||
-                                                  "",
-                                          }
+                                            userId:
+                                                assignedTo.id,
+                                            name:
+                                                assignedTo.name,
+                                            email:
+                                                assignedTo.email ||
+                                                "",
+                                            avatarUrl:
+                                                assignedTo.avatarUrl ||
+                                                "",
+                                        }
                                         : null,
 
                                     source: "email",
@@ -2570,7 +2569,7 @@ if (isDeliveryNotification) {
                                                 lastError:
                                                     String(
                                                         messageError?.message ||
-                                                            messageError
+                                                        messageError
                                                     ).slice(0, 1500),
                                                 failedAt:
                                                     admin.firestore.FieldValue.serverTimestamp(),
@@ -2687,7 +2686,7 @@ const makeSendAfterHoursAutoReply = ({ database, baseUrl, redirectTo, requireRed
 
             const subjectText = replacePlaceholders(
                 settings.subject ||
-                    "We received your request",
+                "We received your request",
                 ticket,
                 dept
             );
@@ -2697,8 +2696,8 @@ const makeSendAfterHoursAutoReply = ({ database, baseUrl, redirectTo, requireRed
                     "Automated Response",
                     "Outside Working Hours",
                     ticket.parentName ||
-                        ticket.createdBy?.name ||
-                        "User",
+                    ticket.createdBy?.name ||
+                    "User",
                     bodyText,
                     `${baseUrl}/tickets/${event.params.ticketId}`,
                     String(ticket.ticketNumber),
@@ -2784,7 +2783,7 @@ const makeSendEmailOnAgentReply = ({ database, baseUrl, redirectTo, requireRedir
 
             const lastMsg =
                 afterMessages[
-                    afterMessages.length - 1
+                afterMessages.length - 1
                 ];
 
             if (
@@ -2825,11 +2824,11 @@ const makeSendEmailOnAgentReply = ({ database, baseUrl, redirectTo, requireRedir
                     "Ticket Update",
                     "NIS CRM Support",
                     after.parentName ||
-                        after.createdBy?.name ||
-                        "User",
+                    after.createdBy?.name ||
+                    "User",
                     lastMsg.text ||
-                        lastMsg.content ||
-                        "",
+                    lastMsg.content ||
+                    "",
                     `${baseUrl}/tickets/${event.params.ticketId}`,
                     String(after.ticketNumber),
                     after.subject || "Ticket"
@@ -2841,10 +2840,9 @@ const makeSendEmailOnAgentReply = ({ database, baseUrl, redirectTo, requireRedir
 
             if (previousIds.length) {
                 extraHeaders.push(
-                    `In-Reply-To: <${
-                        previousIds[
-                            previousIds.length - 1
-                        ]
+                    `In-Reply-To: <${previousIds[
+                    previousIds.length - 1
+                    ]
                     }>`
                 );
 
@@ -2963,7 +2961,7 @@ const makeSendEmailOnAssignment = ({ database, baseUrl, redirectTo, requireRedir
                     "Ticket Assigned to You",
                     "NIS CRM Notification",
                     after.assignedTo.name ||
-                        "Staff Member",
+                    "Staff Member",
                     content,
                     `${baseUrl}/tickets/${event.params.ticketId}`,
                     String(after.ticketNumber),
@@ -3054,7 +3052,7 @@ const makeSendEmailOnNewTicketAssignment = ({ database, baseUrl, redirectTo, req
                     "New Ticket Assignment",
                     "NIS CRM Notification",
                     ticket.assignedTo.name ||
-                        "Staff Member",
+                    "Staff Member",
                     content,
                     `${baseUrl}/tickets/${event.params.ticketId}`,
                     String(ticket.ticketNumber),
@@ -3251,8 +3249,8 @@ const makeSendEmailToParentOnTransfer = ({ database, baseUrl, redirectTo, requir
                         "Ticket Category Updated",
                         "NIS CRM Support",
                         after.parentName ||
-                            after.createdBy?.name ||
-                            "User",
+                        after.createdBy?.name ||
+                        "User",
                         parentContent,
                         `${baseUrl}/tickets/${event.params.ticketId}`,
                         String(after.ticketNumber),
