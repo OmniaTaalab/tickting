@@ -30,6 +30,9 @@ type MailboxConfig = {
     campusName?: string;
     routes?: MailboxRoute[];
     enabled?: boolean;
+    // Director-style queues: assign only to these staff (from the CRM sheet),
+    // without requiring the email text to identify a single school.
+    assignTo?: string[];
 };
 
 type ResolvedRouting = {
@@ -42,11 +45,12 @@ type ResolvedRouting = {
     allowedGrades: string[];
 };
 
- function academicMailbox(
+function academicMailbox(
     email: string,
     campusId: string,
     campusName: string,
-    routes: MailboxRoute[]
+    routes: MailboxRoute[],
+    assignTo?: string[]
 ): MailboxConfig {
     return {
         email,
@@ -55,6 +59,7 @@ type ResolvedRouting = {
         campusName,
         routes,
         enabled: true,
+        ...(assignTo?.length ? { assignTo: assignTo.map((e) => e.toLowerCase()) } : {}),
     };
 }
 // Real taxonomy names from the CRM settings. These are not Firebase document IDs.
@@ -226,13 +231,14 @@ const MAILBOXES: MailboxConfig[] = [
             school,
             division: "Director's Office",
             grades: [...ALL_GRADE_NAMES],
-        }))
+        })),
+        ["ahmed.zayed@nis-egypt.com"]
     ),
-    ...[
-        "abdelnasser.ahmed@nis-egypt.com",
-        "hagar.elnaggar@nis-egypt.com",
-        "portosaid.director's.office@nis-egypt.com",
-    ].map((email): MailboxConfig => academicMailbox(
+    ...([
+        ["abdelnasser.ahmed@nis-egypt.com", ["abdelnasser.ahmed@nis-egypt.com"]],
+        ["hagar.elnaggar@nis-egypt.com", ["hagar.elnaggar@nis-egypt.com"]],
+        ["portosaid.director's.office@nis-egypt.com", ["mayar.radwan@nis-egypt.com", "omnia.hamdon@nis-egypt.com"]],
+    ] as Array<[string, string[]]>).map(([email, assignTo]): MailboxConfig => academicMailbox(
         email,
         "ZKLWPTV7ip6bC6dK95L4",
         "Porto Said",
@@ -242,7 +248,8 @@ const MAILBOXES: MailboxConfig[] = [
                 division,
                 grades: [...ALL_GRADE_NAMES],
             }))
-        )
+        ),
+        assignTo
     )),
 
     // Academic queues
@@ -605,7 +612,7 @@ const MAILBOXES: MailboxConfig[] = [
     ),
 
     academicMailbox(
-        "préparatoirefrench.tag@nis-egypt.com",
+        "preparatoirefrench.tag@nis-egypt.com",
         "PbHP5tPr5EjuWAs6NtAn",
         "1st Settlement",
         [
@@ -915,7 +922,8 @@ const MAILBOXES: MailboxConfig[] = [
             school,
             division: "Director's Office",
             grades: [...SHOROUK_ALL_GRADE_NAMES],
-        }))
+        })),
+        ["mai.abdallah@nis-egypt.com", "sally.mahmoud@nis-egypt.com", "basma.nada@nis-egypt.com"]
     ),
 
     academicMailbox(
@@ -1475,6 +1483,21 @@ function employeeMatchesMailbox(
     // Campus-only mailboxes (e.g. Admissions/Collection) do not require academic scope.
     // Role, Available status, active session, department (query), and campus still apply.
     if (mailbox.department !== "Academic" && !(mailbox.routes?.length)) return true;
+
+    // Director-style queues: only the staff listed in the CRM sheet, matched on
+    // campus and (when the queue has one division) division. School and grade
+    // are not required because the queue covers every school.
+    if (mailbox.assignTo?.length) {
+        const email = String(employee.email || "").trim().toLowerCase();
+        if (!email || !mailbox.assignTo.includes(email)) return false;
+        if (routing.divisionName && !employeeHasScope(
+            employee.divisionIds,
+            [employee.divisions, employee.divisionNames, employee.division, employee.divisionName],
+            routing.divisionName,
+            taxonomy.divisions
+        )) return false;
+        return true;
+    }
 
     // Academic mailboxes must resolve to one coherent school/division route.
     if (!routing.selectedRoute || !routing.schoolName || !routing.divisionName) return false;
@@ -2257,7 +2280,7 @@ if (isDeliveryNotification) {
                                 const gradeIds = routing.gradeName
                                     ? taxonomyIds(taxonomy.grades, routing.gradeName)
                                     : [];
-                                if (mailbox.department === "Academic" &&
+                                if (mailbox.department === "Academic" && !mailbox.assignTo?.length &&
                                     (!routing.selectedRoute || schoolIds.length !== 1 || divisionIds.length !== 1 ||
                                      !selectedGradeNames.length ||
                                      selectedGradeNames.some((grade) => !taxonomyIds(taxonomy.grades, grade).length))) {
@@ -2282,7 +2305,13 @@ if (isDeliveryNotification) {
                                     !mailbox.routes?.length &&
                                     Boolean(mailbox.campusId);
 
+                                const directorMailbox =
+                                    mailbox.department === "Academic" &&
+                                    Boolean(mailbox.assignTo?.length) &&
+                                    divisionIds.length <= 1;
+
                                 const academicRouteValid =
+                                    directorMailbox ||
                                     mailbox.department === "Academic" &&
                                     Boolean(routing.selectedRoute) &&
                                     schoolIds.length === 1 &&
