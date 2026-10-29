@@ -56,14 +56,16 @@ const defaultFilters = {
   campusId: '',
   schoolId: '',
   divisionId: '',
+  assignedToIds: [] as string[],
   gradeId: '',
   status: '' as TicketStatus | '',
   channel: '' as TicketChannel | '',
   sla: 'all' as SLAFilterValue,
   dateRange: undefined as DateRange | undefined,
 };
-
-function readStoredFilters(slaParam: SLAFilterValue | null) {
+type TicketsFiltersState = typeof defaultFilters;
+function readStoredFilters(slaParam: SLAFilterValue | null
+): TicketsFiltersState {
   if (typeof window === 'undefined') {
     return { ...defaultFilters, sla: slaParam || 'all' };
   }
@@ -89,7 +91,7 @@ function readStoredFilters(slaParam: SLAFilterValue | null) {
     if (saved) {
       try {
         parsed = JSON.parse(saved);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     const searchVal = qSearch !== null ? qSearch : (typeof parsed?.search === 'string' ? parsed.search : '');
@@ -124,7 +126,13 @@ function readStoredFilters(slaParam: SLAFilterValue | null) {
     }
 
     return {
+
       search: searchVal,
+      assignedToIds: Array.isArray(parsed?.assignedToIds)
+        ? parsed.assignedToIds.filter(
+          (id: unknown): id is string => typeof id === 'string'
+        )
+        : [],
       departmentId: deptVal,
       campusId: campusVal,
       schoolId: schoolVal,
@@ -157,7 +165,7 @@ function readStoredPage(): number {
         return parsed.currentPage;
       }
     }
-  } catch (e) {}
+  } catch (e) { }
   return 1;
 }
 
@@ -172,6 +180,7 @@ const defaultVisibleColumns: Record<ColumnId, boolean> = {
   channel: true,
   division: true,
   campus: true,
+  schoolSystem: true,
   slaStatus: true,
   tags: true,
   lastUpdated: true,
@@ -187,7 +196,7 @@ function readStoredColumns(): Record<ColumnId, boolean> {
     if (saved) {
       return { ...defaultVisibleColumns, ...JSON.parse(saved) };
     }
-  } catch (e) {}
+  } catch (e) { }
   return defaultVisibleColumns;
 }
 
@@ -200,7 +209,9 @@ function TicketsContent() {
   const { t } = useLanguage();
 
   const [isPending, startTransition] = useTransition();
-  const [filters, setFilters] = useState(() => readStoredFilters(slaParam));
+  const [filters, setFilters] = useState<TicketsFiltersState>(
+    () => readStoredFilters(slaParam)
+  );
   const [currentPage, setCurrentPage] = useState(() => readStoredPage());
   const [visibleColumns, setVisibleColumns] = useState<Record<ColumnId, boolean>>(() => readStoredColumns());
   const ITEMS_PER_PAGE = 50;
@@ -275,7 +286,7 @@ function TicketsContent() {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       try {
         localStorage.setItem(TICKETS_COLUMNS_STORAGE_KEY, JSON.stringify(next));
-      } catch (e) {}
+      } catch (e) { }
       return next;
     });
   };
@@ -396,36 +407,54 @@ function TicketsContent() {
 
   const roleFilteredTickets = useMemo(() => {
     if (!rawTickets || !userProfile || !user) return [];
-    
+
     if (userProfile.role === 'Admin') return rawTickets;
 
     const myUserId = user.uid;
     const myDeptId = userProfile.departmentId;
     const myCampuses = userProfile.campusIds || [];
-    
+
     return rawTickets.filter(t => {
-        const isAssignedToMe = t.assignedTo?.userId === myUserId;
-        const isSameDept = t.departmentId === myDeptId;
-        const isAllowedCampus = myCampuses.length === 0 || (t.campusId && myCampuses.includes(t.campusId));
-        
-        if (userProfile.role === 'Manager') {
-            // STRICT: Must be department AND within assigned campuses
-            return isSameDept && isAllowedCampus;
-        }
+      const isAssignedToMe = t.assignedTo?.userId === myUserId;
+      const isSameDept = t.departmentId === myDeptId;
+      const isAllowedCampus = myCampuses.length === 0 || (t.campusId && myCampuses.includes(t.campusId));
 
-        if (userProfile.role === 'Employee') {
-            // Own tasks OR (Dept match if viewing department pool)
-            return isAssignedToMe || (isSameDept && isAllowedCampus);
-        }
-        
+      if (userProfile.role === 'Manager') {
+        // STRICT: Must be department AND within assigned campuses
         return isSameDept && isAllowedCampus;
-    });
-  }, [rawTickets, userProfile, user]);
+      }
 
+      if (userProfile.role === 'Employee') {
+        // Own tasks OR (Dept match if viewing department pool)
+        return isAssignedToMe || (isSameDept && isAllowedCampus);
+      }
+
+      return isSameDept && isAllowedCampus;
+    });
+
+  }, [rawTickets, userProfile, user]);
+  const assignedToOptions = useMemo(() => {
+    const employees = new Map<string, { id: string; name: string }>();
+
+    roleFilteredTickets.forEach(ticket => {
+      const assignee = ticket.assignedTo;
+
+      if (assignee?.userId && assignee?.name) {
+        employees.set(assignee.userId, {
+          id: assignee.userId,
+          name: assignee.name,
+        });
+      }
+    });
+
+    return Array.from(employees.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [roleFilteredTickets]);
   const applyFilters = (tickets: Ticket[]) => {
     if (!allDepartments) return tickets;
     let result = [...tickets];
-    
+
     if (filters.search) {
       const term = filters.search.toLowerCase().trim();
       result = result.filter(t => {
@@ -435,7 +464,7 @@ function TicketsContent() {
       });
     }
     if (filters.departmentId) {
-        result = result.filter(t => t.departmentId === filters.departmentId);
+      result = result.filter(t => t.departmentId === filters.departmentId);
     }
     if (filters.campusId || filters.schoolId || filters.divisionId || filters.gradeId) {
       result = result.filter(t => {
@@ -489,7 +518,7 @@ function TicketsContent() {
         const finishedAt = isFinished ? toDate(t.resolvedAt || t.closedAt) : null;
 
         const dept = allDepartments.find(d => d.id === t.departmentId);
-        
+
         // Correct channel normalization for SLA key lookup
         const rawChan = t.channel || 'Email';
         let channelKey: TicketChannel = 'Email';
@@ -505,7 +534,7 @@ function TicketsContent() {
         const priority = t.priority || 'Normal';
         const policy = slaSettings[channelKey] || slaSettings['Email'];
         const limitHours = policy?.[priority] || 24;
-        
+
         const compareTime = finishedAt || responded || now;
         const workingHoursElapsed = calculateWorkingHoursElapsed(start, compareTime, dept?.workingHours);
 
@@ -655,6 +684,7 @@ function TicketsContent() {
           <MemoizedTicketFilters
             departments={departmentsForFilter.length > 0 ? departmentsForFilter : (allDepartments || [])}
             campuses={campuses || []}
+            assigneeOptions={assignedToOptions}
             schools={schools || []}
             divisions={divisions || []}
             grades={grades || []}
@@ -668,7 +698,41 @@ function TicketsContent() {
           />
         )}
 
-        <div className={cn("transition-opacity duration-200", isPending ? "opacity-50 pointer-events-none" : "opacity-100")}>
+        <div
+          className={cn("transition-opacity duration-200", isPending ? "opacity-50 pointer-events-none" : "opacity-100")}
+          onClickCapture={(event) => {
+            if (!user || !paginatedTickets || !sortedAndFilteredTickets) return;
+            const target = event.target as HTMLElement;
+            // The checkbox is for selection, not for opening a ticket.
+            if (target.closest('[role="checkbox"], button, a')) return;
+            const cell = target.closest('td');
+            const row = cell?.closest('tr');
+            const body = row?.parentElement;
+            if (!cell || !row || !body || body.tagName.toLowerCase() !== 'tbody') return;
+            const rowIndex = Array.from(body.children).indexOf(row);
+            const openedTicket = paginatedTickets[rowIndex];
+            if (!openedTicket) return;
+
+            if (userProfile?.role === 'Employee' &&
+              openedTicket.assignedTo?.userId !== user.uid) return;
+            try {
+              sessionStorage.setItem('nis_my_ticket_navigation_v1', JSON.stringify({
+                userId: user.uid,
+                targetTicketId: openedTicket.id,
+                orderedTicketIds: sortedAndFilteredTickets
+                  .filter(item =>
+                    userProfile?.role === 'Employee'
+                      ? item.assignedTo?.userId === user.uid
+                      : true
+                  )
+                  .map(item => item.id),
+                capturedAt: Date.now(),
+              }));
+            } catch (error) {
+              console.warn('Unable to save ticket navigation order:', error);
+            }
+          }}
+        >
           <MemoizedTicketList
             data={paginatedTickets}
             isLoading={isLoading}
@@ -679,22 +743,22 @@ function TicketsContent() {
         </div>
 
         {!isLoading && totalPages > 1 && (
-            <div className="flex items-center justify-between px-2 py-4 border-t border-slate-100 bg-slate-50/30 rounded-b-xl">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-tight">
-                    {t('showing')} <span className="text-slate-900">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> {t('to')} <span className="text-slate-900">{Math.min(currentPage * ITEMS_PER_PAGE, totalItems)}</span> {t('of')} <span className="text-slate-900">{totalItems}</span>
-                </p>
-                <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}><ChevronsLeft className="h-4 w-4" /></Button>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}><ChevronLeft className="h-4 w-4" /></Button>
-                    <div className="flex items-center gap-1.5 px-4 h-8 bg-white border border-slate-200 rounded-lg shadow-sm">
-                        <span className="text-xs font-black text-slate-900">{currentPage}</span>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">{t('of')}</span>
-                        <span className="text-xs font-black text-slate-900">{totalPages}</span>
-                    </div>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}><ChevronRight className="h-4 w-4" /></Button>
-                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}><ChevronsRight className="h-4 w-4" /></Button>
-                </div>
+          <div className="flex items-center justify-between px-2 py-4 border-t border-slate-100 bg-slate-50/30 rounded-b-xl">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-tight">
+              {t('showing')} <span className="text-slate-900">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> {t('to')} <span className="text-slate-900">{Math.min(currentPage * ITEMS_PER_PAGE, totalItems)}</span> {t('of')} <span className="text-slate-900">{totalItems}</span>
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}><ChevronsLeft className="h-4 w-4" /></Button>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}><ChevronLeft className="h-4 w-4" /></Button>
+              <div className="flex items-center gap-1.5 px-4 h-8 bg-white border border-slate-200 rounded-lg shadow-sm">
+                <span className="text-xs font-black text-slate-900">{currentPage}</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase">{t('of')}</span>
+                <span className="text-xs font-black text-slate-900">{totalPages}</span>
+              </div>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}><ChevronRight className="h-4 w-4" /></Button>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}><ChevronsRight className="h-4 w-4" /></Button>
             </div>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -702,9 +766,9 @@ function TicketsContent() {
 }
 
 export default function TicketsPage() {
-    return (
-        <Suspense fallback={<div className="p-8 text-center"><Skeleton className="h-10 w-full" /></div>}>
-            <TicketsContent />
-        </Suspense>
-    );
+  return (
+    <Suspense fallback={<div className="p-8 text-center"><Skeleton className="h-10 w-full" /></div>}>
+      <TicketsContent />
+    </Suspense>
+  );
 }

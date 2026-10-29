@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { Input } from '../ui/input';
 import { useLanguage } from '@/hooks/use-language';
 
-export type ColumnId = 'id' | 'details' | 'date' | 'assignedTo' | 'assignedAt' | 'priority' | 'status' | 'channel' | 'division' | 'campus' | 'slaStatus' | 'lastUpdated' | 'resolvedAt' | 'closedAt' | 'firstResponse' | 'tags';
+export type ColumnId = 'schoolSystem' | 'id' | 'details' | 'date' | 'assignedTo' | 'assignedAt' | 'priority' | 'status' | 'channel' | 'division' | 'campus' | 'slaStatus' | 'lastUpdated' | 'resolvedAt' | 'closedAt' | 'firstResponse' | 'tags';
 export type SLAFilterValue = 'all' | 'breached' | 'at-risk';
 
 const CHANNEL_OPTIONS: TicketChannel[] = ['Phone', 'Walk-in', 'Social Media', 'Email', 'Web', 'Form'];
@@ -35,6 +35,7 @@ interface TicketFiltersProps {
     schoolId?: string;
     divisionId?: string;
     gradeId?: string;
+    assignedToIds?: string[];
     status?: TicketStatus | '';
     channel?: TicketChannel | '';
     sla?: SLAFilterValue;
@@ -47,6 +48,7 @@ interface TicketFiltersProps {
     schoolId: string;
     divisionId: string;
     gradeId: string;
+    assignedToIds: string[];
     status: TicketStatus | '';
     channel: TicketChannel | '';
     sla: SLAFilterValue;
@@ -58,6 +60,7 @@ interface TicketFiltersProps {
   schools?: Array<{ id: string; name: string }>;
   divisions?: Array<{ id: string; name: string }>;
   grades?: Array<{ id: string; name: string }>;
+  assigneeOptions?: Array<{ id: string; name: string }>;
   visibleColumns: Record<ColumnId, boolean>;
   onVisibleColumnsChange: React.Dispatch<React.SetStateAction<Record<ColumnId, boolean>>>;
   data: Ticket[];
@@ -118,6 +121,7 @@ export function TicketFilters({
   schools = [],
   divisions = [],
   grades = [],
+  assigneeOptions = [],
   visibleColumns, 
   onVisibleColumnsChange,
   data,
@@ -136,6 +140,7 @@ export function TicketFilters({
     channel: t('channelCol'),
     division: t('divisionCol'),
     campus: t('campusCol'),
+    schoolSystem: 'School System',
     slaStatus: t('slaStatusCol'),
     tags: t('tagsCol'),
     lastUpdated: t('dateUpdatedCol'),
@@ -212,6 +217,7 @@ export function TicketFilters({
     values.schoolId ||
     values.divisionId ||
     values.gradeId ||
+(values.assignedToIds?.length ?? 0) > 0 ||
     values.status ||
     values.channel ||
     (values.sla && values.sla !== 'all') ||
@@ -233,6 +239,7 @@ export function TicketFilters({
       schoolId: '',
       divisionId: '',
       gradeId: '',
+      assignedToIds: [],
       status: '',
       channel: '',
       sla: 'all',
@@ -403,6 +410,35 @@ export function TicketFilters({
                </SelectContent>
              </Select>
            ))}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="h-10 max-w-[220px] gap-2 rounded-xl border-slate-200 bg-white text-xs font-bold">
+                <ListFilter className="h-4 w-4" />
+                <span className="truncate">Assigned To {(values.assignedToIds ?? []).length ? `(${(values.assignedToIds ?? []).length})` : ''}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-[320px] w-[240px] overflow-y-auto">
+              <DropdownMenuLabel>Assigned To</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {[{ id: '__unassigned__', name: 'Unassigned' }, ...assigneeOptions].map(option => (
+                <DropdownMenuCheckboxItem
+                  key={option.id}
+                  checked={(values.assignedToIds ?? []).includes(option.id)}
+                  onSelect={event => event.preventDefault()}
+                  onCheckedChange={checked => onFilterChange({
+                   
+assignedToIds: checked
+  ? [...(values.assignedToIds ?? []), option.id]
+  : (values.assignedToIds ?? []).filter(id => id !== option.id),
+
+                  })}
+                >
+                  {option.name}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <Button 
             variant="outline" 

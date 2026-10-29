@@ -21,7 +21,7 @@ import { TicketActionsToolbar } from './ticket-actions-toolbar';
 import { ColumnId } from './ticket-filters';
 import { format } from 'date-fns';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Mail, Phone, User, Globe, MessageCircle, LayoutList } from 'lucide-react';
+import { Mail, Phone, User, Globe, MessageCircle, LayoutList, ArrowDownAZ, ArrowUpZA, ArrowUpDown } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Timestamp } from 'firebase/firestore';
 import { useLanguage } from '@/hooks/use-language';
@@ -38,6 +38,7 @@ const defaultVisibleColumns: Record<ColumnId, boolean> = {
   channel: true,
   division: true,
   campus: true,
+  schoolSystem: true,
   slaStatus: true,
   tags: true,
   lastUpdated: true,
@@ -53,6 +54,9 @@ interface TicketListProps {
   limit?: number;
   departments: Department[];
   slaSettings: SLASettings;
+  schools?: Array<{ id: string; name: string }>;
+  assignedToSort?: 'none' | 'asc' | 'desc';
+  onAssignedToSortChange?: () => void;
 }
 
 const toDate = (timestamp: Timestamp | string | undefined): Date | null => {
@@ -92,6 +96,17 @@ const categoryColors: { [key: string]: string } = {
     Web: 'text-teal-600',
     Data: 'text-sky-600',
     Support: 'text-slate-600',
+};
+
+const getSchoolSystem = (ticket: Ticket, schools: Array<{ id: string; name: string }>): string => {
+  const schoolName = ticket.schoolName || schools.find(s => s.id === ticket.schoolId)?.name || '';
+  const normalized = schoolName.toLowerCase();
+  if (/\b(ib|international baccalaureate)\b/.test(normalized)) return 'IB';
+  if (/american|usa|united states/.test(normalized)) return 'American';
+  if (/british|english national curriculum|cambridge/.test(normalized)) return 'British';
+  if (/french|fran[cç]ais/.test(normalized)) return 'French';
+  if (/national/.test(normalized)) return 'National';
+  return 'N/A';
 };
 
 const getInitials = (name: string) => {
@@ -219,7 +234,10 @@ export const TicketList = memo(function TicketList({
   visibleColumns = defaultVisibleColumns,
   limit,
   departments,
-  slaSettings
+  slaSettings,
+  schools = [],
+  assignedToSort = 'none',
+  onAssignedToSortChange
 }: TicketListProps) {
   const router = useRouter();
   const { t } = useLanguage();
@@ -269,6 +287,7 @@ export const TicketList = memo(function TicketList({
               {visibleColumns.channel && <TableHead>{t('channelCol')}</TableHead>}
               {visibleColumns.division && <TableHead>{t('divisionCol')}</TableHead>}
               {visibleColumns.campus && <TableHead>{t('campusCol')}</TableHead>}
+               {visibleColumns.schoolSystem && <TableHead>School System</TableHead>}
               {visibleColumns.slaStatus && <TableHead>{t('slaStatusCol')}</TableHead>}
               {visibleColumns.tags && <TableHead>{t('tagsCol')}</TableHead>}
               {visibleColumns.lastUpdated && <><TableHead>{t('dateUpdatedCol')}</TableHead><TableHead>{t('timeUpdatedCol')}</TableHead></>}
@@ -288,6 +307,7 @@ export const TicketList = memo(function TicketList({
                 {visibleColumns.channel && <TableCell><Skeleton className="h-8 w-24" /></TableCell>}
                 {visibleColumns.division && <TableCell><Skeleton className="h-5 w-24" /></TableCell>}
                 {visibleColumns.campus && <TableCell><Skeleton className="h-5 w-24" /></TableCell>}
+               {visibleColumns.schoolSystem && <TableCell><Skeleton className="h-5 w-24" /></TableCell>}
                 {visibleColumns.slaStatus && <TableCell><Skeleton className="h-6 w-24" /></TableCell>}
                 {visibleColumns.tags && <TableCell><Skeleton className="h-5 w-20" /></TableCell>}
                 {visibleColumns.lastUpdated && <><TableCell><Skeleton className="h-5 w-24" /></TableCell><TableCell><Skeleton className="h-5 w-16" /></TableCell></>}
@@ -346,7 +366,12 @@ export const TicketList = memo(function TicketList({
                   <TableHead>{t('timeFirstRespCol')}</TableHead>
                 </>
               )}
-              {visibleColumns.assignedTo && <TableHead>{t('assignedTechCol')}</TableHead>}
+               {visibleColumns.assignedTo && <TableHead>
+                 <button type="button" onClick={onAssignedToSortChange} disabled={!onAssignedToSortChange} className="inline-flex items-center gap-1.5 hover:text-blue-700 font-semibold" title="Sort Assigned To">
+                   {t('assignedTechCol')}
+                   {assignedToSort === 'asc' ? <ArrowDownAZ className="h-4 w-4" /> : assignedToSort === 'desc' ? <ArrowUpZA className="h-4 w-4" /> : <ArrowUpDown className="h-3.5 w-3.5" />}
+                 </button>
+               </TableHead>}
               {visibleColumns.assignedAt && (
                 <>
                   <TableHead>{t('dateAssignedCol')}</TableHead>
@@ -358,6 +383,7 @@ export const TicketList = memo(function TicketList({
               {visibleColumns.channel && <TableHead>{t('channelCol')}</TableHead>}
               {visibleColumns.division && <TableHead>{t('divisionCol')}</TableHead>}
               {visibleColumns.campus && <TableHead>{t('campusCol')}</TableHead>}
+               {visibleColumns.schoolSystem && <TableHead>School System</TableHead>}
               {visibleColumns.slaStatus && <TableHead>{t('slaStatusCol')}</TableHead>}
               {visibleColumns.tags && <TableHead>{t('tagsCol')}</TableHead>}
               {visibleColumns.resolvedAt && (
@@ -474,6 +500,9 @@ export const TicketList = memo(function TicketList({
                   </TableCell>}
                   {visibleColumns.campus && <TableCell onClick={() => handleRowClick(ticket.id)} className="cursor-pointer font-medium">
                     {ticket.campusName || t('na')}
+                  </TableCell>}
+                  {visibleColumns.schoolSystem && <TableCell onClick={() => handleRowClick(ticket.id)} className="cursor-pointer font-medium whitespace-nowrap">
+                    {getSchoolSystem(ticket, schools)}
                   </TableCell>}
                   {visibleColumns.slaStatus && <TableCell onClick={() => handleRowClick(ticket.id)} className="cursor-pointer">
                     <SlaStatusBadge ticket={ticket} slaSettings={slaSettings} departments={departments} />

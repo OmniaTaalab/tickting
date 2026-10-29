@@ -74,6 +74,16 @@ export const isSLAExcluded = (
 ): boolean => {
   return SLA_EXCLUDED_STATUSES.includes(status);
 };
+
+export type LocalTransferScope = {
+  schoolId: string;
+  schoolName: string;
+  divisionId: string;
+  divisionName: string;
+  gradeId: string;
+  gradeName: string;
+};
+
 export type TicketPriority = 'Low' | 'Normal' | 'High' | 'Urgent';
 
 export type TicketChannel = 'Email' | 'Phone' | 'Walk-in' | 'Social Media' | 'Web' | 'Form' | 'WhatsApp';
@@ -170,6 +180,12 @@ export type TicketTransferRecord = {
 
 export type Ticket = {
   id: string;
+  pendingLocalTransferRequestId?: string | null;
+  pendingLocalTransferScope?: LocalTransferScope | null;
+  pendingTransferRequestId?: string | null;
+  pendingTransferCategoryId?: string | null;
+  pendingTransferCategoryName?: string | null;
+
   ticketNumber: number;
   title: string;
   subject: string;
@@ -235,7 +251,13 @@ export type SystemLog = {
 export type TicketEvent = {
   id: string;
   ticketId: string;
-  eventType: 'TICKET_CREATED' | 'TICKET_REPLY' | 'TICKET_STATUS_CHANGED' | 'TICKET_TRANSFER_REQUESTED' | 'TICKET_REASSIGN_REQUESTED';
+eventType:
+  | 'TICKET_CREATED'
+  | 'TICKET_REPLY'
+  | 'TICKET_STATUS_CHANGED'
+  | 'TICKET_TRANSFER_REQUESTED'
+  | 'TICKET_REASSIGN_REQUESTED'
+  | 'TICKET_LOCAL_TRANSFER_REQUESTED';
   title: string;
   message: string;
   recipient: string;
@@ -245,6 +267,8 @@ export type TicketEvent = {
   requestId?: string;
   requestMetadata?: {
     requesterName?: string;
+    requesterId?: string;
+    localTransferScope?: LocalTransferScope;
     fromDepartmentId?: string;
     fromDepartmentName?: string;
     toDepartmentId?: string;

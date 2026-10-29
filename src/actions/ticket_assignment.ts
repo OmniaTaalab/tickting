@@ -530,6 +530,20 @@ export async function autoAssignQueuedTickets(options?: {
     for (const ticketDoc of queuedDocs) {
       const ticket = ticketDoc.data() as Ticket;
       const ticketId = ticketDoc.id;
+
+      // Never auto-assign a ticket awaiting manager approval.
+      if (
+        (ticket as Ticket & { pendingLocalTransferRequestId?: string | null }).pendingLocalTransferRequestId ||
+        (ticket as Ticket & { pendingTransferRequestId?: string | null }).pendingTransferRequestId
+      ) {
+        skippedTickets.push({
+          ticketId,
+          ticketNumber: ticket.ticketNumber,
+          subject: ticket.subject,
+          reason: 'Pending manager transfer approval',
+        });
+        continue;
+      }
       const deptId = ticket.departmentId;
 
       if (!deptId) {
@@ -614,7 +628,13 @@ export async function autoAssignQueuedTickets(options?: {
         const latest = await tx.get(ticketRef);
         const latestAgent = await tx.get(agentRef);
         const latestDepartment = await tx.get(deptInfo.deptRef);
-        if (!latest.exists || latest.data()?.status !== 'Queue' || latest.data()?.assignedTo?.userId) return false;
+        if (
+          !latest.exists ||
+          latest.data()?.status !== 'Queue' ||
+          latest.data()?.assignedTo?.userId ||
+          latest.data()?.pendingLocalTransferRequestId ||
+          latest.data()?.pendingTransferRequestId
+        ) return false;
         const agentData = latestAgent.data();
         if (!agentData || agentData.role !== 'Employee' || agentData.departmentId !== deptId ||
             agentData.status !== 'Available' || !agentData.activeSessionId) return false;

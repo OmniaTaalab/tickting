@@ -53,15 +53,7 @@ function generateRandom4Digit() {
   return Math.floor(1000 + Math.random() * 9000);
 }
 
-const MAILBOX_MAPPING: Record<string, string> = {
-    "1st Settlement": "accounting.1stsettlement@nis-egypt.com",
-    "El-Sherouk": "accounting.shorouk@nis-egypt.com",
-    "6th October": "accounting.6thoctober@nis-egypt.com",
-    "Nasr City": "Accounting.NasrCity@nis-egypt.com",
-    "New Capital International": "accounting.newcapital.int@nis-egypt.com",
-    "New Capital National": "accounting.newcapital.national@nis-egypt.com",
-    "Porto Said": "accounting.portosaid@nis-egypt.com",
-};
+
 
 export async function createTicketAction(
   prevState: CreateTicketState,
@@ -188,7 +180,9 @@ export async function createTicketAction(
     }
 
     const ticketNumber = await generateUniqueTicketNumber(db);
-    const mailboxEmail = campusNameValue ? MAILBOX_MAPPING[campusNameValue] : null;
+    // Outgoing sender mailbox is resolved centrally by Firebase Functions from
+    // the selected category, campus, school, division, and grade.
+    const mailboxEmail = null;
 
     const finalPriority: TicketPriority = channel === 'Walk-in' ? 'High' : 'Normal';
 
@@ -213,7 +207,8 @@ export async function createTicketAction(
       parentName,
       parentEmail,
       studentBlbId: studentBlbId || null,
-      mailboxEmail: mailboxEmail || null,
+      mailboxEmail,
+      createdOutsideWorkingHours: !isNowWorking,
       createdBy: {
         userId: staffId || `anon_${Date.now()}`,
         name: staffName || parentName,

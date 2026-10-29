@@ -5,27 +5,129 @@ import { useMemo, useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { useCollection, useFirebase, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, query, where, doc, orderBy } from 'firebase/firestore';
-import type { TicketEvent, UserProfile, Department } from '@/lib/types';
+import type { TicketEvent, UserProfile, Department, Ticket } from '@/lib/types';
 import { formatDistanceToNow, isToday, subDays } from 'date-fns';
 import { arSA } from 'date-fns/locale';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowRightLeft, Clock, CheckCircle2, UserPlus, ShieldAlert, Check, X, Loader2, ArrowRight, Search, Filter, RotateCcw, Building2, Calendar as CalendarIcon } from 'lucide-react';
+import { ArrowRightLeft, Clock, CheckCircle2, UserPlus, ShieldAlert, Check, X, Loader2, ArrowRight, Search, Filter, RotateCcw, Building2, Calendar as CalendarIcon, Eye } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { approveRequestAction, rejectRequestAction } from '@/actions/request_actions';
+import { decideLocalTransferAction } from '@/actions/ticket_local_transfer';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLanguage } from '@/hooks/use-language';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 
 const getRequestIcon = (type: string) => {
     if (type === 'TICKET_REASSIGN_REQUESTED') return <UserPlus className="h-6 w-6" />;
     return <ArrowRightLeft className="h-6 w-6" />;
 };
+
+// Read only: request preview does not change the ticket or request.
+function TicketQuickPreview({ ticketId, open, onClose }: {
+    ticketId: string | null;
+    open: boolean;
+    onClose: () => void;
+}) {
+    const { firestore } = useFirebase();
+    const router = useRouter();
+    const ticketRef = useMemoFirebase(
+        () => firestore && open && ticketId ? doc(firestore, 'tickets', ticketId) : null,
+        [firestore, open, ticketId]
+    );
+    const { data: ticket, isLoading } = useDoc<Ticket>(ticketRef);
+    const record = ticket as (Ticket & {
+        schoolName?: string;
+        schoolSystem?: string;
+        curriculum?: string;
+        slaStatus?: string;
+        mailboxEmail?: string;
+    }) | null;
+    const messages = (ticket?.messages || [])
+        .filter(m => !m.isInternal)
+        .slice()
+        .sort((a, b) => {
+            const aDate = previewDate(a.createdAt)?.getTime() || 0;
+            const bDate = previewDate(b.createdAt)?.getTime() || 0;
+            return aDate - bDate;
+        });
+    const firstMessage = messages.find(m => m.author?.userId === ticket?.createdBy?.userId) || messages[0];
+    const remainingMessages = messages.filter(m => m !== firstMessage);
+    const latestReply = remainingMessages.length > 0 ? remainingMessages[remainingMessages.length - 1] : null;
+
+    return (
+        <Sheet open={open} onOpenChange={isOpen => { if (!isOpen) onClose(); }}>
+            <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto p-6">
+                <SheetHeader className="text-start mb-6">
+                    <SheetTitle>Ticket Quick Preview</SheetTitle>
+                    <SheetDescription>Review the ticket without leaving Requests.</SheetDescription>
+                </SheetHeader>
+                {isLoading ? (
+                    <div className="space-y-4"><Skeleton className="h-20 w-full" /><Skeleton className="h-40 w-full" /><Skeleton className="h-32 w-full" /></div>
+                ) : !ticket ? (
+                    <p className="text-sm text-slate-500">Ticket not found or unavailable.</p>
+                ) : (
+                    <div className="space-y-5 text-start">
+                        <div className="rounded-xl border border-slate-200 p-4 space-y-3">
+                            <div>
+                                <p className="text-xs text-slate-500">Ticket T-{ticket.ticketNumber || ticket.id.substring(0, 4)}</p>
+                                <p className="font-bold text-slate-900 break-words">{ticket.title || ticket.subject || 'No Subject'}</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                                {([
+                                    ['Status', ticket.status],
+                                    ['Assigned To', ticket.assignedTo?.name || 'Unassigned'],
+                                    ['Priority', ticket.priority],
+                                    ['Category', ticket.departmentName],
+                                    ['Campus', ticket.campusName],
+                                    ['School', record?.schoolName],
+                                    ['Division', ticket.divisionName],
+                                    ['School System', record?.schoolSystem || record?.curriculum],
+                                    ['Created At', previewDate(ticket.createdAt)?.toLocaleString()],
+                                    ['Updated At', previewDate(ticket.updatedAt)?.toLocaleString()],
+                                    ['SLA State', record?.slaStatus],
+                                ] as Array<[string, string | null | undefined]>).map(([label, value]) => (
+                                    <div key={label} className="min-w-0">
+                                        <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-400">{label}</p>
+                                        <p className="font-medium text-slate-700 break-words">{value || 'N/A'}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-600">First Parent Message</h3>
+                            <div className="rounded-xl bg-slate-50 border p-4 text-sm whitespace-pre-wrap break-words">
+                                {firstMessage?.text || 'No parent message available.'}
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-600">Latest Reply</h3>
+                            <div className="rounded-xl bg-slate-50 border p-4 text-sm whitespace-pre-wrap break-words">
+                                {latestReply?.text || 'No replies yet.'}
+                            </div>
+                        </div>
+                        <Button className="w-full bg-[#1e3a8a] hover:bg-[#1e3a8a]/90" onClick={() => router.push(`/tickets/${ticket.id}`)}>
+                            Open full ticket
+                        </Button>
+                    </div>
+                )}
+            </SheetContent>
+        </Sheet>
+    );
+}
+
+function previewDate(value: any): Date | null {
+    if (!value) return null;
+    const date = typeof value.toDate === 'function' ? value.toDate() :
+        typeof value.seconds === 'number' ? new Date(value.seconds * 1000) : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
 
 function ApproveReassignDialog({
     isOpen,
@@ -136,11 +238,13 @@ export default function RequestsPage() {
     const router = useRouter();
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [reassignRequest, setReassignRequest] = useState<TicketEvent | null>(null);
+    const [previewTicketId, setPreviewTicketId] = useState<string | null>(null);
 
     // Filter states
     const [searchQuery, setSearchQuery] = useState('');
-    const [typeFilter, setTypeFilter] = useState<'all' | 'transfer' | 'reassign'>('all');
-    const [departmentFilter, setDepartmentFilter] = useState<string>('all');
+const [typeFilter, setTypeFilter] = useState<
+  'all' | 'transfer' | 'localTransfer' | 'reassign'
+>('all');    const [departmentFilter, setDepartmentFilter] = useState<string>('all');
     const [dateFilter, setDateFilter] = useState<'all' | 'today' | '7days' | '30days'>('all');
 
     const deptsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'departments'), orderBy('name', 'asc')) : null, [firestore]);
@@ -157,8 +261,11 @@ export default function RequestsPage() {
         return query(
             collection(firestore, 'ticket-events'),
             where('recipient', '==', user.uid),
-            where('eventType', 'in', ['TICKET_TRANSFER_REQUESTED', 'TICKET_REASSIGN_REQUESTED'])
-        );
+where('eventType', 'in', [
+  'TICKET_TRANSFER_REQUESTED',
+  'TICKET_REASSIGN_REQUESTED',
+  'TICKET_LOCAL_TRANSFER_REQUESTED'
+])        );
     }, [firestore, user]);
 
     const { data: requests, isLoading } = useCollection<TicketEvent>(requestsQuery);
@@ -199,6 +306,7 @@ export default function RequestsPage() {
         const filterItem = (req: TicketEvent) => {
             // Type filter
             if (typeFilter === 'transfer' && req.eventType !== 'TICKET_TRANSFER_REQUESTED') return false;
+            if (typeFilter === 'localTransfer' && req.eventType !== 'TICKET_LOCAL_TRANSFER_REQUESTED') return false;
             if (typeFilter === 'reassign' && req.eventType !== 'TICKET_REASSIGN_REQUESTED') return false;
 
             // Department filter
@@ -279,6 +387,37 @@ export default function RequestsPage() {
             return;
         }
 
+if (request.eventType === 'TICKET_LOCAL_TRANSFER_REQUESTED') {
+  setProcessingId(request.id);
+  try {
+    const idToken = await user.getIdToken();
+    const result = await decideLocalTransferAction(
+      request.id,
+      idToken,
+      'approved'
+    );
+
+    if (result.success) {
+      toast({ title: t('approved'), description: result.message });
+    } else {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: result.message,
+      });
+    }
+  } catch (error) {
+    toast({
+      variant: 'destructive',
+      title: 'Error',
+      description: 'Could not approve Local Transfer.',
+    });
+  } finally {
+    setProcessingId(null);
+  }
+  return;
+}
+
         setProcessingId(request.id);
         try {
             const result = await approveRequestAction(request.id, { userId: user.uid, name: userProfile?.name || 'Admin' });
@@ -297,6 +436,38 @@ export default function RequestsPage() {
     const handleReject = async (e: React.MouseEvent, request: TicketEvent) => {
         e.stopPropagation();
         if (!user) return;
+        
+if (request.eventType === 'TICKET_LOCAL_TRANSFER_REQUESTED') {
+  setProcessingId(request.id);
+  try {
+    const idToken = await user.getIdToken();
+    const result = await decideLocalTransferAction(
+      request.id,
+      idToken,
+      'rejected'
+    );
+
+    if (result.success) {
+      toast({ title: t('rejected'), description: result.message });
+    } else {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: result.message,
+      });
+    }
+  } catch (error) {
+    toast({
+      variant: 'destructive',
+      title: 'Error',
+      description: 'Could not reject Local Transfer.',
+    });
+  } finally {
+    setProcessingId(null);
+  }
+  return;
+}
+
         setProcessingId(request.id);
         try {
             const result = await rejectRequestAction(request.id, { userId: user.uid, name: userProfile?.name || 'Admin' });
@@ -337,6 +508,7 @@ export default function RequestsPage() {
 
     return (
         <div className="max-w-5xl mx-auto space-y-10 pb-20">
+            <TicketQuickPreview ticketId={previewTicketId} open={!!previewTicketId} onClose={() => setPreviewTicketId(null)} />
             <ApproveReassignDialog 
                 isOpen={!!reassignRequest} 
                 onClose={() => setReassignRequest(null)} 
@@ -381,6 +553,9 @@ export default function RequestsPage() {
                                 <SelectItem value="all">{t('allRequestTypes')}</SelectItem>
                                 <SelectItem value="transfer">{t('transferRequestsOnly')}</SelectItem>
                                 <SelectItem value="reassign">{t('reassignRequestsOnly')}</SelectItem>
+                                <SelectItem value="localTransfer">
+  Local Transfer
+</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -445,7 +620,7 @@ export default function RequestsPage() {
                             <Card 
                                 key={req.id} 
                                 className="group border-none shadow-sm transition-all hover:shadow-md cursor-pointer overflow-hidden bg-white border-l-4 border-l-blue-600"
-                                onClick={() => router.push(`/tickets/${req.ticketId}`)}
+                                onClick={() => setPreviewTicketId(req.ticketId)}
                             >
                                 <CardContent className="p-6">
                                     <div className="flex flex-col md:flex-row md:items-center gap-6">
@@ -473,6 +648,27 @@ export default function RequestsPage() {
                                                 {getTranslatedDescription(req)}
                                             </p>
 
+{req.eventType === 'TICKET_LOCAL_TRANSFER_REQUESTED' &&
+  req.requestMetadata?.localTransferScope && (
+    <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 space-y-2 text-start">
+      <p className="text-xs font-bold text-blue-800">
+        Requested Local Transfer
+      </p>
+      <p className="text-xs text-slate-700">
+        <strong>School:</strong>{' '}
+        {req.requestMetadata.localTransferScope.schoolName}
+      </p>
+      <p className="text-xs text-slate-700">
+        <strong>Division:</strong>{' '}
+        {req.requestMetadata.localTransferScope.divisionName}
+      </p>
+      <p className="text-xs text-slate-700">
+        <strong>Grade:</strong>{' '}
+        {req.requestMetadata.localTransferScope.gradeName}
+      </p>
+    </div>
+  )}
+
                                             {req.requestMetadata && (
                                                 <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100 max-w-fit">
                                                     <div className="text-center">
@@ -494,6 +690,11 @@ export default function RequestsPage() {
                                         </div>
 
                                         <div className="flex items-center gap-2 shrink-0">
+                                            <Button type="button" size="icon" variant="outline" title="Preview ticket" aria-label="Preview ticket"
+                                                onClick={(e) => { e.stopPropagation(); setPreviewTicketId(req.ticketId); }}
+                                                className="h-9 w-9 border-slate-200 text-slate-600">
+                                                <Eye className="h-4 w-4" />
+                                            </Button>
                                             <Button 
                                                 size="sm" 
                                                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-9 px-4 gap-2 shadow-sm"
@@ -535,20 +736,31 @@ export default function RequestsPage() {
                         {processedRequests.slice(0, 5).map((req) => (
                             <div 
                                 key={req.id} 
-                                className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-xl grayscale-[0.5] opacity-70"
+                                className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-xl grayscale-[0.5] opacity-70 cursor-pointer hover:opacity-100"
+                                onClick={() => setPreviewTicketId(req.ticketId)}
                             >
                                 <div className="flex items-center gap-4">
                                     <div className={cn("p-2 rounded-lg", req.status === 'approved' ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600")}>
                                         {req.status === 'approved' ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
                                     </div>
                                     <div className="text-start">
-                                        <p className="text-sm font-bold text-slate-900">{req.eventType === 'TICKET_REASSIGN_REQUESTED' ? t('reassignRequestedTitle') : t('transferRequestedTitle')}</p>
-                                        <p className="text-[10px] text-slate-500 font-medium">{t('processedBy')} {req.processedBy || 'Admin'}</p>
+req.eventType === 'TICKET_LOCAL_TRANSFER_REQUESTED'
+  ? 'Local Transfer Requested'
+  : req.eventType === 'TICKET_REASSIGN_REQUESTED'
+    ? t('reassignRequestedTitle')
+    : t('transferRequestedTitle')
+                                            <p className="text-[10px] text-slate-500 font-medium">{t('processedBy')} {req.processedBy || 'Admin'}</p>
                                     </div>
                                 </div>
-                                <Badge className={cn("text-[9px] font-black uppercase", req.status === 'approved' ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700")}>
-                                    {req.status === 'approved' ? t('approved') : t('rejected')}
-                                </Badge>
+                                <div className="flex items-center gap-2">
+                                    <Button type="button" size="icon" variant="ghost" title="Preview ticket" aria-label="Preview ticket"
+                                        onClick={(e) => { e.stopPropagation(); setPreviewTicketId(req.ticketId); }}>
+                                        <Eye className="h-4 w-4" />
+                                    </Button>
+                                    <Badge className={cn("text-[9px] font-black uppercase", req.status === 'approved' ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700")}>
+                                        {req.status === 'approved' ? t('approved') : t('rejected')}
+                                    </Badge>
+                                </div>
                             </div>
                         ))}
                     </div>

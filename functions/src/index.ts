@@ -1249,12 +1249,50 @@ async function sendHtmlEmail(args: {
     });
 }
 
+/** Resolve sender for form-created tickets using the same mailbox definitions
+ * used by the Gmail synchronization process. Fail closed on missing/ambiguous
+ * routes instead of sending as the wrong department or campus. */
 function getSenderMailbox(ticket: any): string {
-    return (
-        ticket?.originalRecipientEmail ||
-        ticket?.mailboxEmail ||
-        DEFAULT_SENDER_EMAIL
+    // Tickets received by email must reply from their original inbox.
+    if (ticket?.originalRecipientEmail) return ticket.originalRecipientEmail;
+
+    const department = normalizeRoutingText(ticket?.departmentName || ticket?.categoryName || "");
+    const campusId = String(ticket?.campusId || "");
+    const candidates = MAILBOXES.filter((mailbox) =>
+        mailbox.enabled !== false &&
+        normalizeRoutingText(mailbox.department) === department &&
+        (!mailbox.campusId || mailbox.campusId === campusId)
     );
+
+    // Campus-specific mailboxes must take precedence over department-wide ones.
+    const scoped = candidates.filter((mailbox) => mailbox.campusId === campusId);
+    const pool = scoped.length ? scoped : candidates.filter((mailbox) => !mailbox.campusId);
+
+    const matching = pool.filter((mailbox) => {
+        if (!mailbox.routes?.length) return true;
+        return mailbox.routes.some((route) =>
+            normalizeRoutingText(route.school) === normalizeRoutingText(ticket?.schoolName || "") &&
+            normalizeRoutingText(route.division) === normalizeRoutingText(ticket?.divisionName || ticket?.division || "") &&
+            route.grades.some((grade) =>
+                normalizeRoutingText(grade) === normalizeRoutingText(ticket?.gradeName || ticket?.grade || "")
+            )
+        );
+    });
+
+    // More than one match needs explicit routing configuration, not guesswork.
+    const uniqueEmails = Array.from(new Set(matching.map((mailbox) => mailbox.email.toLowerCase())));
+    if (uniqueEmails.length === 1) return matching[0].email;
+    console.warn("SENDER_MAILBOX_UNRESOLVED", {
+        ticketNumber: ticket?.ticketNumber,
+        department: ticket?.departmentName,
+        campusId,
+        school: ticket?.schoolName,
+        division: ticket?.divisionName,
+        grade: ticket?.gradeName,
+        matches: uniqueEmails.length,
+    });
+    // Use the organization's standard verified sender, never a random mailbox.
+    return DEFAULT_SENDER_EMAIL;
 }
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
@@ -2675,9 +2713,13 @@ const makeSendAfterHoursAutoReply = ({ database, baseUrl, redirectTo, requireRed
 
             const dept = deptSnap.data() as any;
 
-            if (isWorkingTime(dept?.workingHours)) {
-                return;
-            }
+            // Form-created tickets record the decision at creation time using
+            // the server-side working-hours utility (including official holidays).
+            // Older/email-created tickets retain the existing check.
+            const isOutsideHours = typeof ticket.createdOutsideWorkingHours === "boolean"
+                ? ticket.createdOutsideWorkingHours
+                : !isWorkingTime(dept?.workingHours);
+            if (!isOutsideHours) return;
 
             const globalSnap = await db
                 .collection("settings")
