@@ -130,7 +130,16 @@ export async function approveRequestAction(
                 (ticketDeptId && actorDeptId === ticketDeptId);
             
             if (!isAuthorized) {
-                return { success: false, message: 'Permission denied: You can only manage requests for your assigned department and campuses.' };
+                // The ticket is outside this manager's current scope. Keep the
+                // request untouched in Firestore; tell the UI to hide its stale card.
+                revalidatePath('/requests');
+                return {
+                    success: false,
+                    message: 'Permission denied: You can only manage requests for your assigned department and campuses.',
+                    removeFromList: true,
+                    eventId,
+                    requestId: event.requestId || null,
+                };
             }
         }
 
@@ -359,7 +368,16 @@ export async function rejectRequestAction(eventId: string, actor: { userId: stri
                 (ticketDeptId && actorDeptId === ticketDeptId);
             
             if (!isAuthorized) {
-                return { success: false, message: 'Permission denied: You can only manage requests for your assigned department and campuses.' };
+                // The ticket is outside this manager's current scope. Keep the
+                // request untouched in Firestore; tell the UI to hide its stale card.
+                revalidatePath('/requests');
+                return {
+                    success: false,
+                    message: 'Permission denied: You can only manage requests for your assigned department and campuses.',
+                    removeFromList: true,
+                    eventId,
+                    requestId: event.requestId || null,
+                };
             }
         }
 

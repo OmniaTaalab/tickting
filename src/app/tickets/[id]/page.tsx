@@ -1111,7 +1111,7 @@ if (ticket.status === 'Duplicate' || String(ticket.status) === 'Ignored') return
               <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
                  <button
   type="button"
- onClick={() => router.push('/tickets')}
+ onClick={() => router.push('/tickets')} 
   className="hover:text-primary flex items-center gap-1 transition-colors cursor-pointer text-slate-400 hover:text-slate-800 font-medium bg-transparent border-0 p-0"
 >
   {isRTL ? (
