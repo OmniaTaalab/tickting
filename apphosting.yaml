@@ -3,6 +3,12 @@
 
 runConfig:
   maxInstances: 1
+  # 512MiB (the default) was OOM-killed ~400 times in 7 days (Cloud Run logs,
+  # "Memory limit of 512 MiB exceeded"), restarting the only instance every few
+  # minutes. Matches the 2GiB set manually in the Cloud Run console on 2026-11-02;
+  # without this line the next App Hosting rollout would revert it to 512MiB.
+  memoryMiB: 2048
+  cpu: 1
 
 env:
   - variable: NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID
