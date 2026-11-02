@@ -13,9 +13,26 @@
  * script (functions/scripts/backfill-ticket-summaries.cjs) so they can never drift.
  */
 import type * as FirebaseFirestore from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 
 export const TICKETS_COLLECTION = "tickets";
 export const SUMMARIES_COLLECTION = "ticket_summaries";
+/** Tombstones: ticket_summaries_deleted/{id} { deletedAt } written when a summary is removed. */
+export const DELETED_COLLECTION = "ticket_summaries_deleted";
+/**
+ * Server commit time of the last summary write. Lets a client that loaded a snapshot
+ * at time T subscribe to "summaries changed since T" instead of re-streaming everything.
+ * Not part of the summary content (ignored by equality checks).
+ */
+export const SYNCED_AT_FIELD = "_summarySyncedAt";
+
+/** Summary content without bookkeeping fields. */
+export function summaryContent(data: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+    if (!data || !Object.prototype.hasOwnProperty.call(data, SYNCED_AT_FIELD)) return data;
+    const rest = { ...data };
+    delete rest[SYNCED_AT_FIELD];
+    return rest;
+}
 
 /** Fields no list page reads. Everything else is copied verbatim. */
 export const DROPPED_FIELDS: ReadonlySet<string> = new Set([
@@ -96,7 +113,7 @@ export function compactRoutingScope(routingOptions: unknown):
 export function buildTicketSummary(ticket: Record<string, unknown>): Record<string, unknown> {
     const summary: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(ticket)) {
-        if (DROPPED_FIELDS.has(key) || key === "routingOptions") continue;
+        if (DROPPED_FIELDS.has(key) || key === "routingOptions" || key === SYNCED_AT_FIELD) continue;
         summary[key] = value;
     }
     if (Object.prototype.hasOwnProperty.call(ticket, "routingOptions")) {
@@ -164,20 +181,24 @@ export async function mirrorTicketSummary(
 ): Promise<MirrorResult> {
     const ticketRef = db.collection(TICKETS_COLLECTION).doc(ticketId);
     const summaryRef = db.collection(SUMMARIES_COLLECTION).doc(ticketId);
+    const tombstoneRef = db.collection(DELETED_COLLECTION).doc(ticketId);
     const dryRun = options.dryRun === true;
     // Dry runs use a read-only transaction: no locks are taken on live tickets.
     return db.runTransaction(async (tx) => {
         const [ticketSnap, summarySnap] = await tx.getAll(ticketRef, summaryRef);
         if (!ticketSnap.exists) {
             if (!summarySnap.exists) return "absent";
-            if (!dryRun) tx.delete(summaryRef);
+            if (!dryRun) {
+                tx.delete(summaryRef);
+                tx.set(tombstoneRef, { deletedAt: FieldValue.serverTimestamp() });
+            }
             return "deleted";
         }
         const summary = buildTicketSummary(ticketSnap.data() as Record<string, unknown>);
-        if (summarySnap.exists && firestoreValuesEqual(summarySnap.data(), summary)) {
+        if (summarySnap.exists && firestoreValuesEqual(summaryContent(summarySnap.data()), summary)) {
             return "unchanged";
         }
-        if (!dryRun) tx.set(summaryRef, summary);
+        if (!dryRun) tx.set(summaryRef, { ...summary, [SYNCED_AT_FIELD]: FieldValue.serverTimestamp() });
         return "written";
     }, dryRun ? { readOnly: true } : undefined);
 }

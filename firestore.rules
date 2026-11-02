@@ -43,6 +43,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Deletion markers for ticket_summaries (fast-load clients remove these ids). Admin SDK only.
+    match /ticket_summaries_deleted/{ticketId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /users/{userId} {
       allow get, list: if true;
       allow create: if isOwner(userId) && request.auth.uid == userId;

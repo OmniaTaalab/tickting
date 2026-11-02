@@ -1,6 +1,7 @@
 'use client';
 
 import { onSnapshot, type Query } from 'firebase/firestore';
+import { clearTicketFastStores } from '@/firebase/firestore/ticket-fast-store';
 
 /**
  * Keep-alive registry for heavy ticket-list listeners.
@@ -13,15 +14,24 @@ import { onSnapshot, type Query } from 'firebase/firestore';
 const keepAlive = new Map<string, () => void>();
 let keepAliveOwner: string | null = null;
 
-export function clearTicketKeepAlive() {
+/** Stop only the background summary listeners (used when fast load takes over). */
+export function clearSummaryKeepAlive() {
   keepAlive.forEach(unsub => unsub());
   keepAlive.clear();
   keepAliveOwner = null;
 }
 
+/** Stop everything (sign-out, user switch, kill switch off). */
+export function clearTicketKeepAlive() {
+  clearSummaryKeepAlive();
+  clearTicketFastStores();
+}
+
 export function keepTicketQueryAlive(key: string, q: Query, uid: string) {
   if (keepAliveOwner !== uid) {
-    clearTicketKeepAlive();
+    // Only this registry's listeners; never dispose fast stores from here (they track
+    // their own owner and are cleared on sign-out / flag changes).
+    clearSummaryKeepAlive();
     keepAliveOwner = uid;
   }
   if (keepAlive.has(key)) return;

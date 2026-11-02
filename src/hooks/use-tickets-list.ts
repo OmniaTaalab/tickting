@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   and,
   collection,
@@ -12,10 +12,11 @@ import {
   type Firestore,
   type Query,
 } from 'firebase/firestore';
-import { useFirestore, useMemoFirebase, useCollection, useUser } from '@/firebase';
+import { useAuth, useFirestore, useMemoFirebase, useCollection, useUser } from '@/firebase';
 import type { UseCollectionResult } from '@/firebase/firestore/use-collection';
 import { ACTIVE_STATUSES, scopeKey, type TicketScope } from '@/lib/ticket-scope';
 import { clearTicketKeepAlive, keepTicketQueryAlive } from '@/firebase/firestore/ticket-keepalive';
+import { getTicketFastStore, type FastStoreState } from '@/firebase/firestore/ticket-fast-store';
 
 /**
  * Live kill switch: settings/ticketSummaries { enabled: true }.
@@ -23,24 +24,45 @@ import { clearTicketKeepAlive, keepTicketQueryAlive } from '@/firebase/firestore
  * - Flipping it in the Firestore console switches every open browser immediately.
  * Returns undefined until the first answer arrives (pages show their skeleton meanwhile).
  */
-let flagCache: boolean | undefined;
-const flagSubscribers = new Set<(v: boolean) => void>();
+type TicketFlags = { enabled: boolean; fastLoad: boolean; fastLoadUids: string[] };
+const FLAGS_OFF: TicketFlags = { enabled: false, fastLoad: false, fastLoadUids: [] };
+const sameFlags = (a: TicketFlags, b: TicketFlags) =>
+  a.enabled === b.enabled && a.fastLoad === b.fastLoad && a.fastLoadUids.join('|') === b.fastLoadUids.join('|');
+let flagCache: TicketFlags | undefined;
+const flagSubscribers = new Set<(v: TicketFlags) => void>();
 let flagUnsubscribe: (() => void) | null = null;
 
-function subscribeFlag(firestore: Firestore, cb: (v: boolean) => void): () => void {
+function subscribeFlag(firestore: Firestore, cb: (v: TicketFlags) => void): () => void {
   flagSubscribers.add(cb);
   if (!flagUnsubscribe) {
     flagUnsubscribe = onSnapshot(
       doc(firestore, 'settings', 'ticketSummaries'),
       snap => {
-        flagCache = snap.exists() && snap.data()?.enabled === true;
-        if (!flagCache) clearTicketKeepAlive();
-        flagSubscribers.forEach(fn => fn(flagCache as boolean));
+        const d = snap.exists() ? snap.data() : undefined;
+        const enabled = d?.enabled === true;
+        // fastLoad / fastLoadUids (staged rollout allowlist) only apply on top of enabled summaries.
+        const uids = Array.isArray(d?.fastLoadUids) ? d!.fastLoadUids.filter((u: unknown) => typeof u === 'string') : [];
+        const next: TicketFlags = {
+          enabled,
+          fastLoad: enabled && d?.fastLoad === true,
+          fastLoadUids: enabled ? uids : [],
+        };
+        if (!flagCache || !sameFlags(flagCache, next)) {
+          const prev = flagCache;
+          if (!next.enabled) clearTicketKeepAlive();
+          else if (!prev || !sameFlags(prev, next)) {
+            // Fast load (re)configured: drop background summary listeners so they don't
+            // compete with the fast path; drop fast stores of users who are no longer included.
+            clearTicketKeepAlive();
+          }
+          flagCache = next;
+          flagSubscribers.forEach(fn => fn(next));
+        }
       },
       () => {
-        flagCache = false;
+        flagCache = FLAGS_OFF;
         clearTicketKeepAlive();
-        flagSubscribers.forEach(fn => fn(false));
+        flagSubscribers.forEach(fn => fn(FLAGS_OFF));
       }
     );
   }
@@ -49,15 +71,22 @@ function subscribeFlag(firestore: Firestore, cb: (v: boolean) => void): () => vo
   };
 }
 
-export function useTicketSummariesEnabled(): boolean | undefined {
+/**
+ * settings/ticketSummaries { enabled, fastLoad } — both live kill switches.
+ * undefined until the first answer arrives.
+ */
+export function useTicketFlags(): TicketFlags | undefined {
   const firestore = useFirestore();
-  const [enabled, setEnabled] = useState<boolean | undefined>(flagCache);
+  const [flags, setFlags] = useState<TicketFlags | undefined>(flagCache);
   useEffect(() => {
-    if (flagCache !== undefined) setEnabled(flagCache);
-    return subscribeFlag(firestore, setEnabled);
+    if (flagCache !== undefined) setFlags(flagCache);
+    return subscribeFlag(firestore, setFlags);
   }, [firestore]);
-  return enabled;
+  return flags;
 }
+
+const NO_FAST_STATE: FastStoreState<any> = { data: null, failed: false };
+const noopSubscribe = () => () => {};
 
 const ACTIVE = [...ACTIVE_STATUSES];
 
@@ -97,10 +126,29 @@ export function useTicketsList<T = any>(
   opts: { keepAlive?: boolean } = {}
 ): UseCollectionResult<T> {
   const firestore = useFirestore();
+  const auth = useAuth();
   const { user } = useUser();
-  const enabled = useTicketSummariesEnabled();
+  const flags = useTicketFlags();
+  const enabled = flags === undefined ? undefined : flags.enabled;
   const key = scope ? scopeKey(scope) : null;
   const wantKeepAlive = opts.keepAlive === true;
+  const uid = user?.uid ?? null;
+
+  // Fast path (flags.fastLoad): one compressed snapshot + incremental live changes.
+  const fastForMe = !!(flags?.enabled && uid && (flags.fastLoad || flags.fastLoadUids.includes(uid)));
+  const fastStore = useMemo(
+    () => (key !== null && scope && uid && fastForMe ? getTicketFastStore(firestore, auth, scope, uid) : null),
+    // scope is fully described by its key; flags object identity changes on any flag change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [firestore, auth, key, uid, fastForMe, flags]
+  );
+  const subscribeFast = useCallback(
+    (fn: () => void) => (fastStore ? fastStore.subscribe(fn) : noopSubscribe()),
+    [fastStore]
+  );
+  const getFast = useCallback(() => (fastStore ? fastStore.getState() : NO_FAST_STATE), [fastStore]);
+  const fastState = useSyncExternalStore(subscribeFast, getFast, () => NO_FAST_STATE);
+  const useFast = fastStore !== null && !fastState.failed;
 
   // Legacy path: identical to the previous code (full tickets collection).
   const legacyQuery = useMemoFirebase(
@@ -108,17 +156,17 @@ export function useTicketsList<T = any>(
     [firestore, key !== null, enabled]
   );
   // Summary path.
+  // (also the automatic fallback when the fast path fails)
   const summaryQuery = useMemoFirebase(
-    () => (key !== null && scope && enabled === true ? buildSummaryQuery(firestore, scope) : null),
+    () => (key !== null && scope && enabled === true && !useFast ? buildSummaryQuery(firestore, scope) : null),
     // scope is fully described by its key
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [firestore, key, enabled]
+    [firestore, key, enabled, useFast]
   );
 
   const legacy = useCollection<T>(legacyQuery, { reuseUnchangedDocs: true });
   const summaries = useCollection<T>(summaryQuery, { reuseUnchangedDocs: true });
 
-  const uid = user?.uid ?? null;
   useEffect(() => {
     if (!wantKeepAlive || !summaryQuery || !key || !uid) return;
     keepTicketQueryAlive(key, summaryQuery, uid);
@@ -126,6 +174,11 @@ export function useTicketsList<T = any>(
 
   if (key === null) return IDLE as UseCollectionResult<T>;
   if (enabled === undefined) return WAITING as UseCollectionResult<T>;
+  if (useFast) {
+    return fastState.data === null
+      ? (WAITING as UseCollectionResult<T>)
+      : ({ data: fastState.data, isLoading: false, error: null } as UseCollectionResult<T>);
+  }
   const res = enabled ? summaries : legacy;
   // useCollection only flips isLoading=true inside its effect, so in the render where a
   // query is first created it reports {data:null, isLoading:false}. Report that as loading

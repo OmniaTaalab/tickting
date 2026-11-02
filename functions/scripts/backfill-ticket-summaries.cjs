@@ -14,7 +14,10 @@
  *   node scripts/backfill-ticket-summaries.cjs --apply         # write summaries + remove orphans
  *   node scripts/backfill-ticket-summaries.cjs --verify        # verify only (no writes)
  *   node scripts/backfill-ticket-summaries.cjs --enable        # verify, then settings/ticketSummaries.enabled = true
- *   node scripts/backfill-ticket-summaries.cjs --disable       # kill switch: enabled = false
+ *   node scripts/backfill-ticket-summaries.cjs --disable       # kill switch: enabled = false (back to full tickets)
+ *   node scripts/backfill-ticket-summaries.cjs --fast-load-uids uid1,uid2   # fast load for these users only (staged rollout)
+ *   node scripts/backfill-ticket-summaries.cjs --fast-load on   # fast load for everyone
+ *   node scripts/backfill-ticket-summaries.cjs --fast-load off  # fast load kill switch (keeps summaries on)
  *
  * Credentials: Application Default Credentials (gcloud auth application-default login).
  */
@@ -23,6 +26,7 @@ const {
     mirrorTicketSummary,
     buildTicketSummary,
     firestoreValuesEqual,
+    summaryContent,
     TICKETS_COLLECTION,
     SUMMARIES_COLLECTION,
 } = require("../lib/ticket-summary.js");
@@ -102,7 +106,7 @@ async function verify() {
         const sSnaps = await db.getAll(...chunk.map(id => db.collection(SUMMARIES_COLLECTION).doc(id)));
         for (let k = 0; k < chunk.length; k++) {
             if (!tSnaps[k].exists || !sSnaps[k].exists) continue; // changed concurrently
-            if (!firestoreValuesEqual(sSnaps[k].data(), buildTicketSummary(tSnaps[k].data()))) {
+            if (!firestoreValuesEqual(summaryContent(sSnaps[k].data()), buildTicketSummary(tSnaps[k].data()))) {
                 mismatched++;
                 if (mismatchedIds.length < 20) mismatchedIds.push(chunk[k]);
             }
@@ -151,6 +155,61 @@ async function preflight() {
     return ok;
 }
 
+/**
+ * Fast-load preflight: PROVE the deployed mirror stamps _summarySyncedAt, otherwise fast-load
+ * clients would miss changes. Requires: mirrorTicketSummary ACTIVE and deployed >= 10 minutes
+ * ago (old revisions drained), and at least one summary stamped AFTER that deploy time.
+ */
+async function fastLoadPreflight() {
+    const { execSync } = require("child_process");
+    let updated;
+    try {
+        updated = execSync(
+            `gcloud functions describe mirrorTicketSummary --region us-central1 --project ${PROJECT_ID} --format="value(state,updateTime)"`,
+            { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+        ).trim().split(/\s+/);
+    } catch {
+        console.log("FAST PREFLIGHT: mirrorTicketSummary not deployed");
+        return false;
+    }
+    const [state, updateTime] = updated;
+    const deployedAt = Date.parse(updateTime);
+    const ageMin = (Date.now() - deployedAt) / 60000;
+    console.log(`FAST PREFLIGHT mirror state=${state} deployed ${ageMin.toFixed(1)} min ago (${updateTime})`);
+    if (state !== "ACTIVE" || !(ageMin >= 10)) {
+        console.log("FAST PREFLIGHT: mirror must be ACTIVE and deployed at least 10 minutes ago");
+        return false;
+    }
+    const stamped = await db.collection(SUMMARIES_COLLECTION).where("_summarySyncedAt", ">", admin.firestore.Timestamp.fromMillis(deployedAt)).limit(1).get();
+    if (stamped.empty) {
+        console.log("FAST PREFLIGHT: no summary stamped after the mirror deploy yet (no ticket changed since, or old mirror still live) - refusing");
+        return false;
+    }
+    console.log(`FAST PREFLIGHT: OK (e.g. ${stamped.docs[0].id} stamped ${stamped.docs[0].get("_summarySyncedAt").toDate().toISOString()})`);
+    try {
+        const { fetch: f } = globalThis;
+        const fs = require("fs");
+        const path = require("path");
+        const cfg = fs.readFileSync(path.join(__dirname, "..", "..", "src", "firebase", "config.ts"), "utf8");
+        const key = (cfg.match(/apiKey:\s*"([^"]+)"/) || [])[1] || "";
+        const res = await f(`https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/ticket_summaries_deleted?pageSize=1&key=${key}`);
+        console.log(`FAST PREFLIGHT unauthenticated read of ticket_summaries_deleted: HTTP ${res.status}`);
+        if (res.status !== 200) return false;
+    } catch (e) {
+        console.log("FAST PREFLIGHT rules check failed:", e.message);
+        return false;
+    }
+    return true;
+}
+
+async function setFastLoad(fields) {
+    await db.collection("settings").doc("ticketSummaries").set(
+        { ...fields, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+    );
+    console.log("settings/ticketSummaries updated:", JSON.stringify(fields));
+}
+
 async function setFlag(enabled) {
     await db.collection("settings").doc("ticketSummaries").set(
         { enabled, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
@@ -159,7 +218,26 @@ async function setFlag(enabled) {
     console.log(`settings/ticketSummaries.enabled = ${enabled}`);
 }
 
+const argv = process.argv.slice(2);
+const argAfter = name => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
+
 (async () => {
+    const fastArg = argAfter("--fast-load");
+    const uidsArg = argAfter("--fast-load-uids");
+    if (fastArg === "off") {
+        await setFastLoad({ fastLoad: false, fastLoadUids: [] });
+        return;
+    }
+    if (fastArg === "on" || uidsArg !== undefined) {
+        if (!(await fastLoadPreflight())) {
+            console.error("NOT enabling fast load.");
+            process.exitCode = 1;
+            return;
+        }
+        if (fastArg === "on") await setFastLoad({ fastLoad: true });
+        else await setFastLoad({ fastLoadUids: uidsArg.split(",").map(s => s.trim()).filter(Boolean) });
+        return;
+    }
     if (DISABLE) {
         await setFlag(false);
         return;
