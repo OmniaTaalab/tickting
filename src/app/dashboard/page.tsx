@@ -100,12 +100,15 @@ function DashboardPage() {
   const departmentsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
   const { data: departments } = useCollection<Department>(departmentsQuery);
 
+  // PERF: not gated on isProfileLoading — that flag flips false->true->false on mount,
+  // which created, destroyed and re-created this full-collection listener. The rendered
+  // data is still gated on userProfile (roleFilteredTickets) and the skeleton on isProfileLoading.
   const ticketsQuery = useMemoFirebase(() => {
-    if (!firestore || isProfileLoading || !user) return null;
+    if (!firestore || !user) return null;
     return query(collection(firestore, 'tickets'));
-  }, [firestore, user, isProfileLoading]);
+  }, [firestore, user]);
 
-  const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<TicketType>(ticketsQuery);
+  const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<TicketType>(ticketsQuery, { reuseUnchangedDocs: true });
 
   const roleFilteredTickets = useMemo(() => {
     if (!rawTickets || !userProfile || !user) return null;

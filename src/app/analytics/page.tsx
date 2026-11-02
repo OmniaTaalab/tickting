@@ -56,12 +56,14 @@ export default function AnalyticsPage() {
   );
   const { data: campuses } = useCollection<Campus>(campusesQuery);
 
+  // PERF: depend on profile *existence* only (the factory reads no profile fields).
+  const hasProfile = !!userProfile;
   const ticketsQuery = useMemoFirebase(() => {
-    if (!firestore || !user || !userProfile) return null;
+    if (!firestore || !user || !hasProfile) return null;
     return query(collection(firestore, 'tickets'));
-  }, [firestore, user, userProfile]);
+  }, [firestore, user, hasProfile]);
 
-  const { data: rawTickets, isLoading: isTicketsLoading } = useCollection<Ticket>(ticketsQuery);
+  const { data: rawTickets, isLoading: isTicketsLoading } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
 
   // Preserve the existing role-based visibility rules.
   const roleFilteredTickets = useMemo(() => {

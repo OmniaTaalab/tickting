@@ -112,12 +112,14 @@ export async function createTicketAction(
     staffId, staffName, staffEmail, staffAvatar
   } = validatedFields.data;
   
-  const attachments: string[] = [];
   const attachmentEntries = formData.getAll('attachments');
-  
-  for (const entry of attachmentEntries) {
-    if (!entry || !(entry instanceof File)) continue;
-    if (entry.size === 0) continue;
+
+  // PERF: upload attachments concurrently instead of one-by-one. uploadOne never rejects
+  // (all work is inside the same try/catch as before; skipped/failed entries return null),
+  // and Promise.all preserves input order, so `attachments` has the same URLs in the same order.
+  const uploadOne = async (entry: FormDataEntryValue): Promise<string | null> => {
+    if (!entry || !(entry instanceof File)) return null;
+    if (entry.size === 0) return null;
 
     try {
       const buffer = Buffer.from(await entry.arrayBuffer());
@@ -139,11 +141,15 @@ export async function createTicketAction(
       });
 
       const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${token}`;
-      attachments.push(downloadUrl);
+      return downloadUrl;
     } catch (uploadError) {
       console.error(`File upload failed:`, uploadError);
+      return null;
     }
-  }
+  };
+
+  const attachments: string[] = (await Promise.all(attachmentEntries.map(uploadOne)))
+    .filter((u): u is string => typeof u === 'string');
 
   const finalSubject = title;
   let newTicketId = '';
@@ -175,18 +181,32 @@ export async function createTicketAction(
     let assignedUser = null;
     let status: TicketStatus = 'Queue'; 
 
+    // PERF: the assignee lookup and ticket-number generation are independent transactions
+    // on disjoint documents; run them concurrently. Equivalence relies on
+    // getRoundRobinAssignee never rejecting (it catches internally and returns null), so a
+    // ticket number is consumed in exactly the same cases as before. allSettled ensures
+    // neither transaction is abandoned mid-flight if the other fails.
+    const [assigneeRes, numberRes] = await Promise.allSettled([
+        isNowWorking
+            ? getRoundRobinAssignee({
+                departmentId,
+                campusId,
+                schoolId,
+                divisionId,
+                gradeId,
+            })
+            : Promise.resolve(null),
+        generateUniqueTicketNumber(db),
+    ]);
+    if (assigneeRes.status === 'rejected') throw assigneeRes.reason;
+    if (numberRes.status === 'rejected') throw numberRes.reason;
+
     if (isNowWorking) {
-        assignedUser = await getRoundRobinAssignee({
-            departmentId,
-            campusId,
-            schoolId,
-            divisionId,
-            gradeId,
-        });
+        assignedUser = assigneeRes.value;
         if (assignedUser) status = 'Open';
     }
 
-    const ticketNumber = await generateUniqueTicketNumber(db);
+    const ticketNumber = numberRes.value;
     const mailboxEmail = campusNameValue ? MAILBOX_MAPPING[campusNameValue] : null;
 
     const finalPriority: TicketPriority = channel === 'Walk-in' ? 'High' : 'Normal';

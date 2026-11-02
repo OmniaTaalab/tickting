@@ -164,12 +164,14 @@ export default function TasksPage() {
     const deptsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
     const { data: departments } = useCollection<Department>(deptsQuery);
 
+    // PERF: depend on profile *existence* only (the factory reads no profile fields).
+    const hasProfile = !!userProfile;
     const ticketsQuery = useMemoFirebase(() => {
-        if (!firestore || !user || !userProfile) return null;
+        if (!firestore || !user || !hasProfile) return null;
         return query(collection(firestore, 'tickets'));
-    }, [firestore, user, userProfile]);
+    }, [firestore, user, hasProfile]);
 
-    const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<Ticket>(ticketsQuery);
+    const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
 
     const personalTickets = useMemo(() => {
         if (!rawTickets || !user) return [];

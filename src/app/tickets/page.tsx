@@ -361,12 +361,15 @@ function TicketsContent() {
     });
   };
 
+  // PERF: depend on profile *existence* only (the factory reads no profile fields),
+  // so profile snapshots (e.g. status toggles) don't tear down the full-tickets listener.
+  const hasProfile = !!userProfile;
   const ticketsQuery = useMemoFirebase(() => {
-    if (!firestore || isProfileLoading || !user || !userProfile) return null;
+    if (!firestore || isProfileLoading || !user || !hasProfile) return null;
     return query(collection(firestore, 'tickets'));
-  }, [firestore, user, userProfile, isProfileLoading]);
+  }, [firestore, user, hasProfile, isProfileLoading]);
 
-  const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<Ticket>(ticketsQuery);
+  const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
 
   // Auto-heal duplicate ticket numbers if any exist
   const hasTriggeredDeduplicate = useRef(false);
@@ -523,9 +526,18 @@ function TicketsContent() {
     return result;
   };
 
+  // PERF: applyFilters (search, scope, date and the expensive SLA working-hours filter)
+  // used to run twice per recompute — once for statusCounts and once for the list —
+  // with identical inputs (it never reads filters.status). Compute it once and share.
+  // Deps are exactly the deps both consumers had before.
+  const filteredBase = useMemo(() => {
+    if (!roleFilteredTickets) return null;
+    return applyFilters(roleFilteredTickets);
+  }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
+
   const statusCounts = useMemo(() => {
-    if (!roleFilteredTickets) return { all: 0, Open: 0, 'In Progress': 0, Resolved: 0, Closed: 0, Queue: 0, Duplicate: 0, Ignored: 0, Waiting: 0 };
-    const base = applyFilters(roleFilteredTickets);
+    if (!roleFilteredTickets || !filteredBase) return { all: 0, Open: 0, 'In Progress': 0, Resolved: 0, Closed: 0, Queue: 0, Duplicate: 0, Ignored: 0, Waiting: 0 };
+    const base = filteredBase;
     return {
       all: base.length,
       Open: base.filter(t => (t.status || '').toLowerCase() === 'open').length,
@@ -537,7 +549,7 @@ function TicketsContent() {
       Ignored: base.filter(t => (t.status || '').toLowerCase() === 'ignored').length,
       Waiting: base.filter(t => (t.status || '').toLowerCase() === 'waiting').length,
     };
-  }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
+  }, [roleFilteredTickets, filteredBase]);
 
   // Background auto-assignment: when an available agent is active and queued tickets exist, auto-assign periodically
   const lastAutoAssignRef = useRef<number>(0);
@@ -564,15 +576,15 @@ function TicketsContent() {
   }, [statusCounts?.Queue, userProfile?.status, userProfile?.departmentId, userProfile?.role, isAutoAssigning, toast, t]);
 
   const sortedAndFilteredTickets = useMemo(() => {
-    if (!roleFilteredTickets) return null;
-    const base = applyFilters(roleFilteredTickets);
-    let result = base;
+    if (!roleFilteredTickets || !filteredBase) return null;
+    // Copy so the in-place sort below never reorders the shared filteredBase array.
+    let result = [...filteredBase];
     if (filters.status) {
       const filterStatus = filters.status.toLowerCase();
       result = result.filter(t => (t.status || '').toLowerCase() === filterStatus);
     }
     return result.sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0));
-  }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
+  }, [roleFilteredTickets, filteredBase, filters.status]);
 
   const totalItems = sortedAndFilteredTickets?.length || 0;
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);

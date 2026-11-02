@@ -2,7 +2,14 @@
 
 import { firebaseConfig } from '@/firebase/config';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import {
+  getAuth,
+  initializeAuth,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  type Auth,
+} from 'firebase/auth';
 import { initializeFirestore, getFirestore, Firestore } from 'firebase/firestore';
 
 // IMPORTANT: DO NOT MODIFY THIS FUNCTION
@@ -27,7 +34,20 @@ export function initializeFirebase() {
 }
 
 export function getSdks(firebaseApp: FirebaseApp, firestore: Firestore) {
-  const auth = getAuth(firebaseApp);
+  // PERF: getAuth() also registers the popup/redirect resolver, which on mobile
+  // browsers, Safari and iOS makes auth startup WAIT for gapi + a hidden auth iframe
+  // before the first onAuthStateChanged. This app never uses popup/redirect sign-in
+  // (email/password + custom token only), so initialize auth with the exact same
+  // persistence list getAuth() uses, minus the resolver. If auth was already
+  // initialized elsewhere, fall back to getAuth() — identical to previous behavior.
+  let auth: Auth;
+  try {
+    auth = initializeAuth(firebaseApp, {
+      persistence: [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence],
+    });
+  } catch {
+    auth = getAuth(firebaseApp);
+  }
 
   return {
     firebaseApp,

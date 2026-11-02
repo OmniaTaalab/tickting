@@ -65,12 +65,14 @@ export async function addTicketReplyAction(
   const { ticketId, replyText, userId, isInternal } = validatedFields.data;
   
   // Handle attachments in reply
-  const newAttachments: string[] = [];
   const attachmentFiles = formData.getAll('attachments');
-  
-  for (const entry of attachmentFiles) {
-    if (!entry || !(entry instanceof File)) continue;
-    if (entry.size === 0) continue;
+
+  // PERF: upload attachments concurrently instead of one-by-one. uploadOne never rejects
+  // (all work, including entry.name access, stays inside the same try/catch as before), and
+  // Promise.all preserves input order, so newAttachments has the same URLs in the same order.
+  const uploadOne = async (entry: FormDataEntryValue): Promise<string | null> => {
+    if (!entry || !(entry instanceof File)) return null;
+    if (entry.size === 0) return null;
 
     try {
       const buffer = Buffer.from(await entry.arrayBuffer());
@@ -90,11 +92,15 @@ export async function addTicketReplyAction(
       });
 
       const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${token}`;
-      newAttachments.push(downloadUrl);
+      return downloadUrl;
     } catch (e) {
       console.error("Upload error in reply:", e);
+      return null;
     }
-  }
+  };
+
+  const newAttachments: string[] = (await Promise.all(attachmentFiles.map(uploadOne)))
+    .filter((u): u is string => typeof u === 'string');
 
   const ticketRef = db.collection('tickets').doc(ticketId);
   let newTicketCreatedId: string | null = null;

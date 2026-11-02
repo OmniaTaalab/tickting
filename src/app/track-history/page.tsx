@@ -59,7 +59,7 @@ export default function TrackHistoryPage() {
     () => (firestore ? query(collection(firestore, 'tickets')) : null),
     [firestore]
   );
-  const { data: allTickets } = useCollection<Ticket>(ticketsQuery);
+  const { data: allTickets } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
 
   const ticketsMap = useMemo(() => {
     if (!allTickets) return new Map<string, Ticket>();

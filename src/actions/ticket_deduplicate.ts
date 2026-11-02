@@ -9,7 +9,9 @@ export async function fixDuplicateTicketNumbersAction(): Promise<{ success: bool
   if (!db) return { success: false, fixedCount: 0 };
 
   try {
-    const ticketsSnapshot = await db.collection('tickets').get();
+    // PERF: only ticketNumber and createdAt are used below; don't download every ticket's
+    // full messages/attachments. A projection returns the same documents in the same order.
+    const ticketsSnapshot = await db.collection('tickets').select('ticketNumber', 'createdAt').get();
     if (ticketsSnapshot.empty) {
       return { success: true, fixedCount: 0 };
     }

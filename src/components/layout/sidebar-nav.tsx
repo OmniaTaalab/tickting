@@ -79,20 +79,23 @@ export function SidebarNav() {
   const slaSettings = savedSLA || DEFAULT_SLA_SETTINGS;
 
   const ticketsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'tickets')) : null, [firestore]);
-  const { data: allTickets } = useCollection<Ticket>(ticketsQuery);
+  const { data: allTickets } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
 
   const deptsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
   const { data: departments } = useCollection<Department>(deptsQuery);
 
+  // PERF: the factory only reads the role, so depend on that primitive instead of the
+  // profile object (which is a new object on every users/{uid} snapshot).
+  const userRole = userProfile?.role;
   const requestsQuery = useMemoFirebase(() => {
-    if (!firestore || !user || (userProfile?.role !== 'Admin' && userProfile?.role !== 'Manager')) return null;
+    if (!firestore || !user || (userRole !== 'Admin' && userRole !== 'Manager')) return null;
     return query(
         collection(firestore, 'ticket-events'),
         where('recipient', '==', user.uid),
         where('eventType', 'in', ['TICKET_TRANSFER_REQUESTED', 'TICKET_REASSIGN_REQUESTED']),
         where('read', '==', false)
     );
-  }, [firestore, user, userProfile]);
+  }, [firestore, user, userRole]);
   const { data: unreadRequests } = useCollection<TicketEvent>(requestsQuery);
 
   // LOGIC: Filter active tickets based on ROLE, DEPARTMENT, and CAMPUS
@@ -123,7 +126,14 @@ export function SidebarNav() {
 
   const stats = useMemo(() => {
     if (!relevantActiveTickets || !userProfile || !departments || !user || !slaSettings) return { badgeCount: 0, slaBreaches: 0 };
-    
+
+    // PERF: O(1) department lookup instead of departments.find per ticket.
+    // First occurrence wins, matching Array.prototype.find semantics.
+    const deptById = new Map<string, Department>();
+    for (const d of departments) {
+      if (!deptById.has(d.id)) deptById.set(d.id, d);
+    }
+
     // SLA breaches: iterate over relevant tickets (Personal for staff, Dept+Campus for manager, All for admin)
     const slaBreaches = relevantActiveTickets.filter(t => {
         if (t.status === 'Duplicate') return false;
@@ -152,7 +162,7 @@ export function SidebarNav() {
       const limitHours = policy?.[priority] || 24;
       
       const compareTime = finishedAt || responded || now;
-      const dept = departments.find(d => d.id === t.departmentId);
+      const dept = t.departmentId !== undefined ? deptById.get(t.departmentId) : undefined;
       
       // USE WORKING HOURS LOGIC
       const workingHoursElapsed = calculateWorkingHoursElapsed(start, compareTime, dept?.workingHours);
