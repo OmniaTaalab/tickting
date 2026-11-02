@@ -27,6 +27,8 @@ import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 import { useToast } from '@/hooks/use-toast';
 import { autoAssignQueuedTickets } from '@/actions/ticket_assignment';
 import { fixDuplicateTicketNumbersAction } from '@/actions/ticket_deduplicate';
+import { useTicketsList } from '@/hooks/use-tickets-list';
+import { listScope } from '@/lib/ticket-scope';
 
 
 
@@ -372,12 +374,14 @@ function TicketsContent() {
     });
   };
 
-  const ticketsQuery = useMemoFirebase(() => {
-    if (!firestore || isProfileLoading || !user || !userProfile) return null;
-    return query(collection(firestore, 'tickets'));
-  }, [firestore, user, userProfile, isProfileLoading]);
-
-  const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<Ticket>(ticketsQuery);
+  // PERF: depend on profile *existence* only (the factory reads no profile fields),
+  // so profile snapshots (e.g. status toggles) don't tear down the full-tickets listener.
+  // PERF: subscribe to lightweight ticket_summaries scoped to a superset of what
+  // roleFilteredTickets keeps (see src/lib/ticket-scope.ts). Same gate as before.
+  const ticketScope = (firestore && !isProfileLoading && user && userProfile)
+    ? listScope(userProfile.role, user.uid, userProfile.departmentId)
+    : null;
+  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<Ticket>(ticketScope, { keepAlive: true });
 
   // Auto-heal duplicate ticket numbers if any exist
   const hasTriggeredDeduplicate = useRef(false);
@@ -474,12 +478,17 @@ function TicketsContent() {
           division?: string; divisionName?: string; divisionNames?: string[];
           grade?: string; gradeName?: string; grades?: string[]; allowedGrades?: string[];
           routingOptions?: Array<{ school?: string; division?: string; grades?: string[] }>;
+          // ticket_summaries carry a de-duplicated copy of the three routingOptions value
+          // lists instead of the (large) routingOptions array. matchesScope only checks
+          // whether ANY value matches, so the de-duplicated lists give the same result.
+          routingScope?: { schools: unknown[]; divisions: unknown[]; grades: unknown[] };
         };
         const routes = record.routingOptions || [];
+        const scope = record.routingScope;
         return matchesScope([record.campusId, record.campusName], filters.campusId, campuses)
-          && matchesScope([record.schoolId, record.school, record.schoolName, record.schoolNames, routes.map(r => r.school)], filters.schoolId, schools)
-          && matchesScope([record.divisionId, record.division, record.divisionName, record.divisionNames, routes.map(r => r.division)], filters.divisionId, divisions)
-          && matchesScope([record.gradeId, record.grade, record.gradeName, record.grades, record.allowedGrades, routes.flatMap(r => r.grades || [])], filters.gradeId, grades);
+          && matchesScope([record.schoolId, record.school, record.schoolName, record.schoolNames, scope ? scope.schools : routes.map(r => r.school)], filters.schoolId, schools)
+          && matchesScope([record.divisionId, record.division, record.divisionName, record.divisionNames, scope ? scope.divisions : routes.map(r => r.division)], filters.divisionId, divisions)
+          && matchesScope([record.gradeId, record.grade, record.gradeName, record.grades, record.allowedGrades, scope ? scope.grades : routes.flatMap(r => r.grades || [])], filters.gradeId, grades);
       });
     }
     if (filters.channel) {
@@ -552,9 +561,18 @@ function TicketsContent() {
     return result;
   };
 
+  // PERF: applyFilters (search, scope, date and the expensive SLA working-hours filter)
+  // used to run twice per recompute — once for statusCounts and once for the list —
+  // with identical inputs (it never reads filters.status). Compute it once and share.
+  // Deps are exactly the deps both consumers had before.
+  const filteredBase = useMemo(() => {
+    if (!roleFilteredTickets) return null;
+    return applyFilters(roleFilteredTickets);
+  }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
+
   const statusCounts = useMemo(() => {
-    if (!roleFilteredTickets) return { all: 0, Open: 0, 'In Progress': 0, Resolved: 0, Closed: 0, Queue: 0, Duplicate: 0, Ignored: 0, Waiting: 0 };
-    const base = applyFilters(roleFilteredTickets);
+    if (!roleFilteredTickets || !filteredBase) return { all: 0, Open: 0, 'In Progress': 0, Resolved: 0, Closed: 0, Queue: 0, Duplicate: 0, Ignored: 0, Waiting: 0 };
+    const base = filteredBase;
     return {
       all: base.length,
       Open: base.filter(t => (t.status || '').toLowerCase() === 'open').length,
@@ -566,7 +584,7 @@ function TicketsContent() {
       Ignored: base.filter(t => (t.status || '').toLowerCase() === 'ignored').length,
       Waiting: base.filter(t => (t.status || '').toLowerCase() === 'waiting').length,
     };
-  }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
+  }, [roleFilteredTickets, filteredBase]);
 
   // Background auto-assignment: when an available agent is active and queued tickets exist, auto-assign periodically
   const lastAutoAssignRef = useRef<number>(0);
@@ -593,15 +611,15 @@ function TicketsContent() {
   }, [statusCounts?.Queue, userProfile?.status, userProfile?.departmentId, userProfile?.role, isAutoAssigning, toast, t]);
 
   const sortedAndFilteredTickets = useMemo(() => {
-    if (!roleFilteredTickets) return null;
-    const base = applyFilters(roleFilteredTickets);
-    let result = base;
+    if (!roleFilteredTickets || !filteredBase) return null;
+    // Copy so the in-place sort below never reorders the shared filteredBase array.
+    let result = [...filteredBase];
     if (filters.status) {
       const filterStatus = filters.status.toLowerCase();
       result = result.filter(t => (t.status || '').toLowerCase() === filterStatus);
     }
     return result.sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0));
-  }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
+  }, [roleFilteredTickets, filteredBase, filters.status]);
 
   const totalItems = sortedAndFilteredTickets?.length || 0;
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);

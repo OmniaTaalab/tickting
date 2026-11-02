@@ -17,6 +17,8 @@ import { HolidayBanner } from '@/components/dashboard/holiday-banner';
 import { UpcomingHolidaysCard } from '@/components/dashboard/upcoming-holidays-card';
 import { useCollection, useDoc, useFirebase, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, doc, Timestamp } from 'firebase/firestore';
+import { useTicketsList } from '@/hooks/use-tickets-list';
+import { listScope } from '@/lib/ticket-scope';
 import type { Ticket as TicketType, UserProfile, SLASettings, Department, TicketChannel } from '@/lib/types';
 import { DEFAULT_SLA_SETTINGS } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -100,12 +102,13 @@ function DashboardPage() {
   const departmentsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
   const { data: departments } = useCollection<Department>(departmentsQuery);
 
-  const ticketsQuery = useMemoFirebase(() => {
-    if (!firestore || isProfileLoading || !user) return null;
-    return query(collection(firestore, 'tickets'));
-  }, [firestore, user, isProfileLoading]);
-
-  const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<TicketType>(ticketsQuery);
+  // PERF: lightweight ticket_summaries scoped to a superset of roleFilteredTickets
+  // (src/lib/ticket-scope.ts). The scope needs the role, so this waits for the profile;
+  // the skeleton already waits for it (isLoading includes isProfileLoading).
+  const ticketScope = (firestore && user && userProfile)
+    ? listScope(userProfile.role, user.uid, userProfile.departmentId)
+    : null;
+  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<TicketType>(ticketScope, { keepAlive: true });
 
   const roleFilteredTickets = useMemo(() => {
     if (!rawTickets || !userProfile || !user) return null;

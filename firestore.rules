@@ -1,3 +1,25 @@
+/**
+ * @fileoverview Firestore Security Rules for Prototyping.
+ *
+ * Core Philosophy:
+ * This ruleset prioritizes rapid prototyping by focusing on authorization and skipping schema validation.
+ * It uses a flexible "owner-based" access control model for user-specific data and a public-read/owner-write model for some top-level collections.
+ *
+ * Data Structure:
+ * - /tickets/{ticketId}: Stores ticket information, globally accessible for reading.
+ * - /users/{userId}: Stores user profile information, with owner-only write access.
+ * - /departments/{departmentId}: Stores department information, globally accessible for reading.
+ * - /subjects/{subjectId}: Stores ticket subjects, globally accessible for reading.
+ * - /system-logs/{logId}: Stores system logs, only readable by admins.
+ *
+ * Key Security Decisions:
+ * - Public Read Access: The 'tickets', 'departments', and 'subjects' collections are publicly readable to facilitate initial development.
+ * - Owner-Only Write Access:  Write operations for user profiles are restricted to the owning user.
+ * - Admin-Only Access: The 'system-logs' collection is only readable by admins.
+ *
+ * Denormalization for Authorization:
+ * - The 'tickets' collection utilizes the `createdBy.userId` field to enforce owner-only updates and deletes.
+ */
 
 rules_version = '2';
 service cloud.firestore {
@@ -8,9 +30,23 @@ service cloud.firestore {
       allow create: if true;
       allow update: if isTicketEditor();
       allow delete: if isSignedIn() && (
-        ('createdBy' in resource.data && request.auth.uid == resource.data.createdBy.userId) || 
+        (('createdBy' in resource.data) && request.auth.uid == resource.data.createdBy.userId) ||
         isAdmin()
       );
+    }
+
+    // Lightweight read-only mirror of /tickets used by the list pages.
+    // Written only by the mirrorTicketSummary Cloud Function / backfill (Admin SDK).
+    // Same read access as /tickets; no client writes.
+    match /ticket_summaries/{ticketId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Deletion markers for ticket_summaries (fast-load clients remove these ids). Admin SDK only.
+    match /ticket_summaries_deleted/{ticketId} {
+      allow read: if true;
+      allow write: if false;
     }
 
     match /users/{userId} {
@@ -19,45 +55,43 @@ service cloud.firestore {
       allow update: if isOwner(userId) || isAdmin();
       allow delete: if isOwner(userId) || isAdmin();
     }
-
-    match /departments/{departmentId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-    
     match /divisions/{divisionId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow get, list: if true;
+  allow create, update, delete: if isAdmin();
+    }
+    match /official_holidays/{holidayId} {
+  allow get, list: if isSignedIn();
+  allow create, update, delete: if isAdmin();
+}
+  match /settings/{settingId} {
+      allow get, list: if true;
+  allow create, update, delete: if isAdmin();
+} 
+    match /departments/{departmentId} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin();
+    }
+		 match /settings_tags/{tagsId} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /subjects/{subjectId} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin();
     }
 
     match /grades/{gradeId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin();
     }
-
-    match /campuses/{campusId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
     match /schools/{schoolId} {
       allow read: if true;
       allow write: if isAdmin();
     }
-
-    match /settings/{settingId} {
-      allow read: if true;
-      allow write: if isAdmin() || isManager();
-    }
-
-    match /settings_tags/{tagId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    match /official_holidays/{holidayId} {
-      allow read: if true;
-      allow write: if isAdmin();
+    match /campuses/{campusId} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin();
     }
 
     match /system-logs/{logId} {
@@ -66,21 +100,20 @@ service cloud.firestore {
     }
 
     match /mail/{mailId} {
-      allow create: if true; // Allowed for automated responses from server actions/guests
+      allow create: if isSignedIn();
       allow read, update, delete: if false;
     }
-    
+
     match /ticket-events/{ticketEventId} {
       allow create: if true;
       allow read, update: if isSignedIn() && request.auth.uid == resource.data.recipient;
       allow delete: if false;
     }
-
-    match /ticket-transfers/{transferId} {
-      allow read: if true;
-      allow write: if isSignedIn() || isAdmin();
-    }
-
+match /ticket-transfers/{transferId} {
+  allow get, list: if isSignedIn();
+  allow create: if isSignedIn();
+  allow update, delete: if isAdmin();
+}
     match /work-sessions/{sessionId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
@@ -97,36 +130,34 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return isSignedIn() && exists(userPath) && get(userPath).data.role == 'Admin';
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin';
     }
-    
-    function isManager() {
-      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return isSignedIn() && exists(userPath) && get(userPath).data.role == 'Manager';
-    }
-    
-    function isTicketEditor() {
-      if (!isSignedIn()) return false;
-      
-      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      if (!exists(userPath)) {
-          return true; 
-      }
-      
-      let userData = get(userPath).data;
-      let isGlobalAdmin = userData.role == 'Admin';
-      let isGlobalManager = userData.role == 'Manager';
-      
-      let isCreator = ('createdBy' in resource.data) && (request.auth.uid == resource.data.createdBy.userId);
-      let isAssignee = ('assignedTo' in resource.data) && (resource.data.assignedTo != null) && (request.auth.uid == resource.data.assignedTo.userId);
-      
-      let ticketDeptId = ('departmentId' in resource.data) ? resource.data.departmentId : null;
-      let isDeptManager = isGlobalManager && (
-          (userData.departmentId != null && userData.departmentId == ticketDeptId)
-      );
 
-      return isCreator || isAssignee || isGlobalAdmin || isDeptManager;
+    function isTicketEditor() {
+      return isSignedIn() && (
+        isAdmin() ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          (
+            (
+              ('createdBy' in resource.data) &&
+              request.auth.uid == resource.data.createdBy.userId
+            ) ||
+            (
+              ('assignedTo' in resource.data) &&
+              resource.data.assignedTo != null &&
+              request.auth.uid == resource.data.assignedTo.userId
+            ) ||
+            (
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Manager' &&
+              ('departmentId' in resource.data) &&
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.departmentId == resource.data.departmentId
+            )
+          )
+        )
+      );
     }
   }
 }

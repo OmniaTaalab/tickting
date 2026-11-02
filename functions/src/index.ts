@@ -1,5 +1,6 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentUpdated, onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
+import { mirrorTicketSummary as mirrorTicketSummaryDoc } from "./ticket-summary.js";
 import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import { getStorage } from "firebase-admin/storage";
@@ -31,6 +32,9 @@ type MailboxConfig = {
     campusName?: string;
     routes?: MailboxRoute[];
     enabled?: boolean;
+    // Director-style queues: assign only to these staff (from the CRM sheet),
+    // without requiring the email text to identify a single school.
+    assignTo?: string[];
 };
 
 type ResolvedRouting = {
@@ -47,7 +51,8 @@ function academicMailbox(
     email: string,
     campusId: string,
     campusName: string,
-    routes: MailboxRoute[]
+    routes: MailboxRoute[],
+    assignTo?: string[]
 ): MailboxConfig {
     return {
         email,
@@ -56,6 +61,7 @@ function academicMailbox(
         campusName,
         routes,
         enabled: true,
+        ...(assignTo?.length ? { assignTo: assignTo.map((e) => e.toLowerCase()) } : {}),
     };
 }
 // Real taxonomy names from the CRM settings. These are not Firebase document IDs.
@@ -227,13 +233,14 @@ const MAILBOXES: MailboxConfig[] = [
             school,
             division: "Director's Office",
             grades: [...ALL_GRADE_NAMES],
-        }))
+        })),
+        ["ahmed.zayed@nis-egypt.com"]
     ),
-    ...[
-        "abdelnasser.ahmed@nis-egypt.com",
-        "hagar.elnaggar@nis-egypt.com",
-        "portosaid.director's.office@nis-egypt.com",
-    ].map((email): MailboxConfig => academicMailbox(
+    ...([
+        ["abdelnasser.ahmed@nis-egypt.com", ["abdelnasser.ahmed@nis-egypt.com"]],
+        ["hagar.elnaggar@nis-egypt.com", ["hagar.elnaggar@nis-egypt.com"]],
+        ["portosaid.director's.office@nis-egypt.com", ["mayar.radwan@nis-egypt.com", "omnia.hamdon@nis-egypt.com"]],
+    ] as Array<[string, string[]]>).map(([email, assignTo]): MailboxConfig => academicMailbox(
         email,
         "ZKLWPTV7ip6bC6dK95L4",
         "Porto Said",
@@ -243,7 +250,8 @@ const MAILBOXES: MailboxConfig[] = [
                 division,
                 grades: [...ALL_GRADE_NAMES],
             }))
-        )
+        ),
+        assignTo
     )),
 
     // Academic queues
@@ -606,7 +614,7 @@ const MAILBOXES: MailboxConfig[] = [
     ),
 
     academicMailbox(
-        "préparatoirefrench.tag@nis-egypt.com",
+        "preparatoirefrench.tag@nis-egypt.com",
         "PbHP5tPr5EjuWAs6NtAn",
         "1st Settlement",
         [
@@ -916,7 +924,8 @@ const MAILBOXES: MailboxConfig[] = [
             school,
             division: "Director's Office",
             grades: [...SHOROUK_ALL_GRADE_NAMES],
-        }))
+        })),
+        ["mai.abdallah@nis-egypt.com", "sally.mahmoud@nis-egypt.com", "basma.nada@nis-egypt.com"]
     ),
 
     academicMailbox(
@@ -1515,6 +1524,21 @@ function employeeMatchesMailbox(
     // Campus-only mailboxes (e.g. Admissions/Collection) do not require academic scope.
     // Role, Available status, active session, department (query), and campus still apply.
     if (mailbox.department !== "Academic" && !(mailbox.routes?.length)) return true;
+
+    // Director-style queues: only the staff listed in the CRM sheet, matched on
+    // campus and (when the queue has one division) division. School and grade
+    // are not required because the queue covers every school.
+    if (mailbox.assignTo?.length) {
+        const email = String(employee.email || "").trim().toLowerCase();
+        if (!email || !mailbox.assignTo.includes(email)) return false;
+        if (routing.divisionName && !employeeHasScope(
+            employee.divisionIds,
+            [employee.divisions, employee.divisionNames, employee.division, employee.divisionName],
+            routing.divisionName,
+            taxonomy.divisions
+        )) return false;
+        return true;
+    }
 
     // Academic mailboxes must resolve to one coherent school/division route.
     if (!routing.selectedRoute || !routing.schoolName || !routing.divisionName) return false;
@@ -2297,7 +2321,7 @@ export const syncEmails = onSchedule(
                                 const gradeIds = routing.gradeName
                                     ? taxonomyIds(taxonomy.grades, routing.gradeName)
                                     : [];
-                                if (mailbox.department === "Academic" &&
+                                if (mailbox.department === "Academic" && !mailbox.assignTo?.length &&
                                     (!routing.selectedRoute || schoolIds.length !== 1 || divisionIds.length !== 1 ||
                                         !selectedGradeNames.length ||
                                         selectedGradeNames.some((grade) => !taxonomyIds(taxonomy.grades, grade).length))) {
@@ -2322,7 +2346,13 @@ export const syncEmails = onSchedule(
                                     !mailbox.routes?.length &&
                                     Boolean(mailbox.campusId);
 
+                                const directorMailbox =
+                                    mailbox.department === "Academic" &&
+                                    Boolean(mailbox.assignTo?.length) &&
+                                    divisionIds.length <= 1;
+
                                 const academicRouteValid =
+                                    directorMailbox ||
                                     mailbox.department === "Academic" &&
                                     Boolean(routing.selectedRoute) &&
                                     schoolIds.length === 1 &&
@@ -3431,3 +3461,24 @@ export const staging = makeTicketEmailFunctions({
     redirectTo: process.env.STAGING_EMAIL_REDIRECT_TO,
     requireRedirect: true,
 });
+
+/**
+ * Keeps ticket_summaries/{ticketId} (a lightweight copy without messages,
+ * description, attachments, transferHistory, emailMessageIds) in sync with
+ * tickets/{ticketId} for the list pages. It only READS tickets and writes
+ * ticket_summaries — it never modifies tickets, so it cannot re-trigger itself
+ * or any other ticket trigger. Mirrors the current ticket state inside a
+ * transaction, so retries / out-of-order events always converge.
+ */
+export const mirrorTicketSummary = onDocumentWritten(
+    // minInstances: 1 keeps one warm instance so list pages see changes in ~1s
+    // instead of waiting for a cold start of this (large) functions bundle.
+    { document: "tickets/{ticketId}", retry: true, minInstances: 1 },
+    async (event) => {
+        const ticketId = event.params.ticketId;
+        const result = await mirrorTicketSummaryDoc(admin.firestore(), ticketId);
+        if (result === "deleted") {
+            console.log(`[mirrorTicketSummary] removed summary for deleted ticket ${ticketId}`);
+        }
+    }
+);

@@ -294,10 +294,13 @@ export async function getRoundRobinAssignee(
     let assignee: AssigneeProfile | null = null;
 
     try {
-        const holidaysSnap = await db.collection('official_holidays').where('isActive', '==', true).get();
+        // PERF: these two reads are independent; run them concurrently (both stay inside
+        // this try, so any failure still lands in the same catch and returns null).
+        const [holidaysSnap, taxonomy] = await Promise.all([
+            db.collection('official_holidays').where('isActive', '==', true).get(),
+            loadTaxonomy(db),
+        ]);
         const activeHolidays = holidaysSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
-
-        const taxonomy = await loadTaxonomy(db);
 
         await db.runTransaction(async (transaction) => {
             const deptDoc = await transaction.get(deptRef);
@@ -424,7 +427,17 @@ export async function autoAssignQueuedTickets(options?: {
       queryRef = queryRef.where('departmentId', '==', options.departmentId);
     }
 
-    const queuedSnap = await queryRef.get();
+    // PERF: project only the fields this function (and agentCoversTicket) reads, instead of
+    // downloading every queued ticket's full messages/attachments. A projection never filters
+    // documents (docs missing these fields are still returned). The assignment transaction
+    // below re-reads the FULL ticket before writing, so its re-check is unaffected.
+    // !! If you read a new ticket field in this loop or in agentCoversTicket, add it here. !!
+    const QUEUE_PROJECTION = [
+      'createdAt', 'departmentId', 'ticketNumber', 'subject', 'campusId', 'campusName',
+      'schoolId', 'schoolName', 'school', 'divisionId', 'divisionName', 'division',
+      'gradeId', 'gradeName', 'grade', 'grades', 'allowedGrades', 'routingOptions', 'mailboxEmail',
+    ];
+    const queuedSnap = await queryRef.select(...QUEUE_PROJECTION).get();
     let queuedDocs = queuedSnap.docs;
 
     if (options?.ticketId) {
@@ -443,19 +456,29 @@ export async function autoAssignQueuedTickets(options?: {
     }
 
     // Sort by createdAt ascending (FIFO: oldest queued tickets get assigned first)
-    queuedDocs.sort((a, b) => {
-      const dataA = a.data();
-      const dataB = b.data();
-      const timeA = dataA.createdAt?.toDate ? dataA.createdAt.toDate().getTime() : (new Date(dataA.createdAt || 0).getTime() || 0);
-      const timeB = dataB.createdAt?.toDate ? dataB.createdAt.toDate().getTime() : (new Date(dataB.createdAt || 0).getTime() || 0);
-      return timeA - timeB;
-    });
+    // PERF: compute each sort key once instead of decoding both docs on every comparison.
+    // Same key expression and stable sort => identical order. Guarded so keys are only
+    // computed when the original comparator would have run.
+    if (queuedDocs.length > 1) {
+      const createdMsById = new Map<string, number>();
+      for (const d of queuedDocs) {
+        const data = d.data();
+        createdMsById.set(d.id, data.createdAt?.toDate ? data.createdAt.toDate().getTime() : (new Date(data.createdAt || 0).getTime() || 0));
+      }
+      queuedDocs.sort((a, b) => createdMsById.get(a.id)! - createdMsById.get(b.id)!);
+    }
 
     const totalQueued = queuedDocs.length;
     const assignments: QueuedTicketAssignment[] = [];
     const skippedTickets: Array<{ ticketId: string; ticketNumber?: number | string; subject?: string; reason: string }> = [];
 
-    const holidaysSnap = await db.collection('official_holidays').where('isActive', '==', true).get();
+    // PERF: holidays and taxonomy are independent reads that both previously ran before the
+    // loop (and before any write); load them concurrently. Any failure still reaches the
+    // same outer catch before any assignment is made.
+    const [holidaysSnap, taxonomy] = await Promise.all([
+      db.collection('official_holidays').where('isActive', '==', true).get(),
+      loadTaxonomy(db),
+    ]);
     const activeHolidays = holidaysSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
 
     // Cache departments and available agents
@@ -523,8 +546,6 @@ export async function autoAssignQueuedTickets(options?: {
       deptCache.set(deptId, entry);
       return entry;
     }
-
-    const taxonomy = await loadTaxonomy(db);
 
     // Process queued tickets in FIFO sequence
     for (const ticketDoc of queuedDocs) {

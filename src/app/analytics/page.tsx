@@ -3,6 +3,8 @@
 import { useMemo, useState } from 'react';
 import { useCollection, useFirebase, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, query, doc, orderBy } from 'firebase/firestore';
+import { useTicketsList } from '@/hooks/use-tickets-list';
+import { analyticsScope } from '@/lib/ticket-scope';
 import type { Ticket, TicketStatus, UserProfile, Department, Campus } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InboundVolumeChart } from '@/components/analytics/inbound-volume-chart';
@@ -56,12 +58,12 @@ export default function AnalyticsPage() {
   );
   const { data: campuses } = useCollection<Campus>(campusesQuery);
 
-  const ticketsQuery = useMemoFirebase(() => {
-    if (!firestore || !user || !userProfile) return null;
-    return query(collection(firestore, 'tickets'));
-  }, [firestore, user, userProfile]);
-
-  const { data: rawTickets, isLoading: isTicketsLoading } = useCollection<Ticket>(ticketsQuery);
+  // PERF: lightweight ticket_summaries scoped to a superset of roleFilteredTickets
+  // (src/lib/ticket-scope.ts). Same gate as before.
+  const ticketScope = (firestore && user && userProfile)
+    ? analyticsScope(userProfile.role, userProfile.departmentId)
+    : null;
+  const { data: rawTickets, isLoading: isTicketsLoading } = useTicketsList<Ticket>(ticketScope, { keepAlive: true });
 
   // Preserve the existing role-based visibility rules.
   const roleFilteredTickets = useMemo(() => {

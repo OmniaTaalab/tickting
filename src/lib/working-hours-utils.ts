@@ -2,17 +2,42 @@ import { format, parse, isSameDay, addDays, startOfDay, isBefore, isAfter, diffe
 import type { WorkingHours, OfficialHoliday } from './types';
 import { DEFAULT_WORKING_HOURS, WEEKDAYS } from './types';
 
+// PERF: Intl.DateTimeFormat construction is expensive (~100us with a timeZone) and
+// these functions run once per day per ticket inside SLA loops. Formatters are
+// immutable and use an explicit locale + timeZone, so a lazily-created shared
+// instance produces byte-identical output. Options must stay exactly as-is.
+let cairoDateFormatter: Intl.DateTimeFormat | null = null;
+function getCairoDateFormatter(): Intl.DateTimeFormat {
+    if (!cairoDateFormatter) {
+        cairoDateFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Africa/Cairo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        });
+    }
+    return cairoDateFormatter;
+}
+
+let cairoWeekdayTimeFormatter: Intl.DateTimeFormat | null = null;
+function getCairoWeekdayTimeFormatter(): Intl.DateTimeFormat {
+    if (!cairoWeekdayTimeFormatter) {
+        cairoWeekdayTimeFormatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Africa/Cairo',
+            weekday: 'long',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
+    }
+    return cairoWeekdayTimeFormatter;
+}
+
 /**
  * Returns date formatted as YYYY-MM-DD in Africa/Cairo timezone.
  */
 export function getCairoDateString(date: Date = new Date()): string {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Africa/Cairo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-    });
-    const parts = formatter.formatToParts(date);
+    const parts = getCairoDateFormatter().formatToParts(date);
     const year = parts.find(p => p.type === 'year')?.value || '1970';
     const month = parts.find(p => p.type === 'month')?.value || '01';
     const day = parts.find(p => p.type === 'day')?.value || '01';
@@ -90,15 +115,7 @@ export function isWithinWorkingHours(
     const hoursToUse = workingHours || DEFAULT_WORKING_HOURS;
 
     // Force Cairo Timezone for evaluation
-    const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Africa/Cairo',
-        weekday: 'long',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-    });
-
-    const parts = formatter.formatToParts(date);
+    const parts = getCairoWeekdayTimeFormatter().formatToParts(date);
     const dayName = parts.find(p => p.type === 'weekday')?.value || '';
     const hour = parts.find(p => p.type === 'hour')?.value || '00';
     const minute = parts.find(p => p.type === 'minute')?.value || '00';
