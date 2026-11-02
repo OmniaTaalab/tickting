@@ -3,6 +3,10 @@
 import { useState, useMemo } from 'react';
 import { useFirebase, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
+import { useTicketsList } from '@/hooks/use-tickets-list';
+import type { TicketScope } from '@/lib/ticket-scope';
+
+const TRACK_HISTORY_SCOPE: TicketScope = { kind: 'all' };
 import type {
   TicketTransferRecord,
   UserProfile,
@@ -55,11 +59,8 @@ export default function TrackHistoryPage() {
   );
   const { data: directTransfers, isLoading: isTransfersLoading } = useCollection<TicketTransferRecord>(transfersQuery);
 
-  const ticketsQuery = useMemoFirebase(
-    () => (firestore ? query(collection(firestore, 'tickets')) : null),
-    [firestore]
-  );
-  const { data: allTickets } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
+  // PERF: lightweight ticket_summaries (only assignedTo is read from these tickets).
+  const { data: allTickets } = useTicketsList<Ticket>(firestore ? TRACK_HISTORY_SCOPE : null, { keepAlive: true });
 
   const ticketsMap = useMemo(() => {
     if (!allTickets) return new Map<string, Ticket>();

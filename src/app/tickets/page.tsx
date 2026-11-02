@@ -27,6 +27,8 @@ import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 import { useToast } from '@/hooks/use-toast';
 import { autoAssignQueuedTickets } from '@/actions/ticket_assignment';
 import { fixDuplicateTicketNumbersAction } from '@/actions/ticket_deduplicate';
+import { useTicketsList } from '@/hooks/use-tickets-list';
+import { listScope } from '@/lib/ticket-scope';
 
 
 
@@ -363,13 +365,12 @@ function TicketsContent() {
 
   // PERF: depend on profile *existence* only (the factory reads no profile fields),
   // so profile snapshots (e.g. status toggles) don't tear down the full-tickets listener.
-  const hasProfile = !!userProfile;
-  const ticketsQuery = useMemoFirebase(() => {
-    if (!firestore || isProfileLoading || !user || !hasProfile) return null;
-    return query(collection(firestore, 'tickets'));
-  }, [firestore, user, hasProfile, isProfileLoading]);
-
-  const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
+  // PERF: subscribe to lightweight ticket_summaries scoped to a superset of what
+  // roleFilteredTickets keeps (see src/lib/ticket-scope.ts). Same gate as before.
+  const ticketScope = (firestore && !isProfileLoading && user && userProfile)
+    ? listScope(userProfile.role, user.uid, userProfile.departmentId)
+    : null;
+  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<Ticket>(ticketScope, { keepAlive: true });
 
   // Auto-heal duplicate ticket numbers if any exist
   const hasTriggeredDeduplicate = useRef(false);
@@ -448,12 +449,17 @@ function TicketsContent() {
           division?: string; divisionName?: string; divisionNames?: string[];
           grade?: string; gradeName?: string; grades?: string[]; allowedGrades?: string[];
           routingOptions?: Array<{ school?: string; division?: string; grades?: string[] }>;
+          // ticket_summaries carry a de-duplicated copy of the three routingOptions value
+          // lists instead of the (large) routingOptions array. matchesScope only checks
+          // whether ANY value matches, so the de-duplicated lists give the same result.
+          routingScope?: { schools: unknown[]; divisions: unknown[]; grades: unknown[] };
         };
         const routes = record.routingOptions || [];
+        const scope = record.routingScope;
         return matchesScope([record.campusId, record.campusName], filters.campusId, campuses)
-          && matchesScope([record.schoolId, record.school, record.schoolName, record.schoolNames, routes.map(r => r.school)], filters.schoolId, schools)
-          && matchesScope([record.divisionId, record.division, record.divisionName, record.divisionNames, routes.map(r => r.division)], filters.divisionId, divisions)
-          && matchesScope([record.gradeId, record.grade, record.gradeName, record.grades, record.allowedGrades, routes.flatMap(r => r.grades || [])], filters.gradeId, grades);
+          && matchesScope([record.schoolId, record.school, record.schoolName, record.schoolNames, scope ? scope.schools : routes.map(r => r.school)], filters.schoolId, schools)
+          && matchesScope([record.divisionId, record.division, record.divisionName, record.divisionNames, scope ? scope.divisions : routes.map(r => r.division)], filters.divisionId, divisions)
+          && matchesScope([record.gradeId, record.grade, record.gradeName, record.grades, record.allowedGrades, scope ? scope.grades : routes.flatMap(r => r.grades || [])], filters.gradeId, grades);
       });
     }
     if (filters.channel) {

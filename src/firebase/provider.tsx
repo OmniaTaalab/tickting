@@ -5,6 +5,7 @@ import { FirebaseApp } from 'firebase/app';
 import { Firestore } from 'firebase/firestore';
 import { Auth, User, onAuthStateChanged } from 'firebase/auth';
 import { FirebaseErrorListener } from '@/components/FirebaseErrorListener'
+import { clearTicketKeepAlive } from '@/firebase/firestore/ticket-keepalive';
 
 interface FirebaseProviderProps {
   children: ReactNode;
@@ -79,6 +80,8 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
     const unsubscribe = onAuthStateChanged(
       auth,
       (firebaseUser) => { // Auth state determined
+        // Drop session-scoped ticket list listeners when signed out.
+        if (!firebaseUser) clearTicketKeepAlive();
         setUserAuthState({ user: firebaseUser, isUserLoading: false, userError: null });
       },
       (error) => { // Auth listener error

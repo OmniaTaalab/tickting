@@ -1,5 +1,6 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentUpdated, onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
+import { mirrorTicketSummary as mirrorTicketSummaryDoc } from "./ticket-summary.js";
 import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import { getStorage } from "firebase-admin/storage";
@@ -3347,6 +3348,26 @@ export const sendEmailToParentOnTransfer = onDocumentUpdated(
                 "Category transfer notification error:",
                 error
             );
+        }
+    }
+);
+/**
+ * Keeps ticket_summaries/{ticketId} (a lightweight copy without messages,
+ * description, attachments, transferHistory, emailMessageIds) in sync with
+ * tickets/{ticketId} for the list pages. It only READS tickets and writes
+ * ticket_summaries — it never modifies tickets, so it cannot re-trigger itself
+ * or any other ticket trigger. Mirrors the current ticket state inside a
+ * transaction, so retries / out-of-order events always converge.
+ */
+export const mirrorTicketSummary = onDocumentWritten(
+    // minInstances: 1 keeps one warm instance so list pages see changes in ~1s
+    // instead of waiting for a cold start of this (large) functions bundle.
+    { document: "tickets/{ticketId}", retry: true, minInstances: 1 },
+    async (event) => {
+        const ticketId = event.params.ticketId;
+        const result = await mirrorTicketSummaryDoc(admin.firestore(), ticketId);
+        if (result === "deleted") {
+            console.log(`[mirrorTicketSummary] removed summary for deleted ticket ${ticketId}`);
         }
     }
 );

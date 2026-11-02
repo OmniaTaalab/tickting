@@ -17,6 +17,8 @@ import { HolidayBanner } from '@/components/dashboard/holiday-banner';
 import { UpcomingHolidaysCard } from '@/components/dashboard/upcoming-holidays-card';
 import { useCollection, useDoc, useFirebase, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, doc, Timestamp } from 'firebase/firestore';
+import { useTicketsList } from '@/hooks/use-tickets-list';
+import { listScope } from '@/lib/ticket-scope';
 import type { Ticket as TicketType, UserProfile, SLASettings, Department, TicketChannel } from '@/lib/types';
 import { DEFAULT_SLA_SETTINGS } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -100,15 +102,13 @@ function DashboardPage() {
   const departmentsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
   const { data: departments } = useCollection<Department>(departmentsQuery);
 
-  // PERF: not gated on isProfileLoading — that flag flips false->true->false on mount,
-  // which created, destroyed and re-created this full-collection listener. The rendered
-  // data is still gated on userProfile (roleFilteredTickets) and the skeleton on isProfileLoading.
-  const ticketsQuery = useMemoFirebase(() => {
-    if (!firestore || !user) return null;
-    return query(collection(firestore, 'tickets'));
-  }, [firestore, user]);
-
-  const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<TicketType>(ticketsQuery, { reuseUnchangedDocs: true });
+  // PERF: lightweight ticket_summaries scoped to a superset of roleFilteredTickets
+  // (src/lib/ticket-scope.ts). The scope needs the role, so this waits for the profile;
+  // the skeleton already waits for it (isLoading includes isProfileLoading).
+  const ticketScope = (firestore && user && userProfile)
+    ? listScope(userProfile.role, user.uid, userProfile.departmentId)
+    : null;
+  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<TicketType>(ticketScope, { keepAlive: true });
 
   const roleFilteredTickets = useMemo(() => {
     if (!rawTickets || !userProfile || !user) return null;

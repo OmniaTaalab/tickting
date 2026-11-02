@@ -4,6 +4,8 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useUser, useFirebase, useMemoFirebase, useDoc, useCollection } from '@/firebase';
 import { doc, collection, query, Timestamp } from 'firebase/firestore';
+import { useTicketsList } from '@/hooks/use-tickets-list';
+import { tasksScope } from '@/lib/ticket-scope';
 import { addHours, isAfter, startOfDay, endOfDay, format } from 'date-fns';
 import type { UserProfile, Ticket, SLASettings, TicketStatus, Department, TicketChannel } from '@/lib/types';
 import { DEFAULT_SLA_SETTINGS } from '@/lib/types';
@@ -164,14 +166,10 @@ export default function TasksPage() {
     const deptsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
     const { data: departments } = useCollection<Department>(deptsQuery);
 
-    // PERF: depend on profile *existence* only (the factory reads no profile fields).
-    const hasProfile = !!userProfile;
-    const ticketsQuery = useMemoFirebase(() => {
-        if (!firestore || !user || !hasProfile) return null;
-        return query(collection(firestore, 'tickets'));
-    }, [firestore, user, hasProfile]);
-
-    const { data: rawTickets, isLoading: areTicketsLoading } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
+    // PERF: only my active assigned tickets — exactly the set personalTickets keeps
+    // (that filter still runs unchanged). Same gate as before.
+    const ticketScope = (firestore && user && userProfile) ? tasksScope(user.uid) : null;
+    const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<Ticket>(ticketScope);
 
     const personalTickets = useMemo(() => {
         if (!rawTickets || !user) return [];

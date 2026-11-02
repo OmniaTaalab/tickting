@@ -41,6 +41,8 @@ import { Button } from '../ui/button';
 import { useLanguage } from '@/hooks/use-language';
 import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 import { toggleUserStatusAction } from '@/actions/status_actions';
+import { useTicketsList } from '@/hooks/use-tickets-list';
+import { sidebarScope } from '@/lib/ticket-scope';
 
 const toDate = (ts: any): Date | null => {
   if (!ts) return null;
@@ -78,8 +80,12 @@ export function SidebarNav() {
   const { data: savedSLA } = useDoc<SLASettings>(slaRef);
   const slaSettings = savedSLA || DEFAULT_SLA_SETTINGS;
 
-  const ticketsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'tickets')) : null, [firestore]);
-  const { data: allTickets } = useCollection<Ticket>(ticketsQuery, { reuseUnchangedDocs: true });
+  // PERF: only the active tickets this role can see (superset of relevantActiveTickets below;
+  // that filter still runs unchanged). Falls back to the full collection via the kill switch.
+  const sidebarTicketScope = user && userProfile
+    ? sidebarScope(userProfile.role, user.uid, userProfile.departmentId)
+    : null;
+  const { data: allTickets } = useTicketsList<Ticket>(sidebarTicketScope);
 
   const deptsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
   const { data: departments } = useCollection<Department>(deptsQuery);
