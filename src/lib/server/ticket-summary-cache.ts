@@ -4,22 +4,32 @@ import { TIMESTAMP_MARKER } from '@/lib/ticket-scope';
 /**
  * Per-instance in-memory copy of ticket_summaries for /api/ticket-summaries.
  *
- * PULL model (no background listener): Cloud Run throttles CPU between requests, so a
- * background listener could silently fall behind. Instead:
- *  - bootstrap: read every summary once (read-only transaction => one consistent readTime);
+ * PULL model (no background listener): Cloud Run allocates CPU only while a request is
+ * in flight, so background work stalls. Instead:
+ *  - bootstrap (first request on an instance): read every summary once in a read-only
+ *    transaction => one consistent readTime;
  *  - on each request (at most every SYNC_INTERVAL_MS): in a read-only transaction, read the
  *    summaries with _summarySyncedAt >= readTime and tombstones with deletedAt >= readTime,
  *    apply them, and advance readTime to that transaction's read time.
  * Every summary write (mirrorTicketSummary) stamps _summarySyncedAt = commit time and every
  * delete writes a tombstone in the same transaction, so the map always equals
  * ticket_summaries "as of readTime".
+ *
+ * Each document's JSON row is serialised ONCE (when it is loaded or changes) and cached, so
+ * building a response is a filter + join of pre-built strings instead of re-encoding ~17k
+ * documents per request.
  */
 const SUMMARIES = 'ticket_summaries';
 const DELETED = 'ticket_summaries_deleted';
 const SYNCED_AT = '_summarySyncedAt';
 const SYNC_INTERVAL_MS = 2_000;
 
-type Snapshot = { docs: Map<string, DocumentData>; readTime: Timestamp };
+export type CachedDoc = {
+  data: DocumentData;
+  /** JSON.stringify([id, encodeValue(data)]), or null if the doc cannot be encoded exactly. */
+  row: string | null;
+};
+type Snapshot = { docs: Map<string, CachedDoc>; readTime: Timestamp };
 
 let current: Snapshot | null = null;
 const lastTs = new Map<string, Timestamp>(); // latest applied commit time per id
@@ -30,17 +40,29 @@ function newer(a: Timestamp, b: Timestamp | undefined) {
   return !b || a.toMillis() > b.toMillis() || (a.toMillis() === b.toMillis() && a.nanoseconds >= b.nanoseconds);
 }
 
+function toCached(id: string, data: DocumentData): CachedDoc {
+  let row: string | null = null;
+  try {
+    row = JSON.stringify([id, encodeValue(data)]);
+  } catch (e) {
+    if (!(e instanceof UnsupportedValueError)) throw e;
+    console.warn(`[ticket-summary-cache] ${id} cannot be encoded exactly: ${e.message}`);
+  }
+  return { data, row };
+}
+
 async function bootstrap(db: Firestore): Promise<Snapshot> {
   const t0 = Date.now();
   const snap = await db.runTransaction(tx => tx.get(db.collection(SUMMARIES)), { readOnly: true });
-  const docs = new Map<string, DocumentData>();
+  const t1 = Date.now();
+  const docs = new Map<string, CachedDoc>();
   for (const d of snap.docs) {
     const data = d.data();
-    docs.set(d.id, data);
+    docs.set(d.id, toCached(d.id, data));
     const ts = data[SYNCED_AT];
     if (ts instanceof Timestamp) lastTs.set(d.id, ts);
   }
-  console.log(`[ticket-summary-cache] bootstrap ${docs.size} summaries in ${Date.now() - t0}ms`);
+  console.log(`[ticket-summary-cache] bootstrap ${docs.size} summaries: read ${t1 - t0}ms, encode ${Date.now() - t1}ms`);
   return { docs, readTime: snap.readTime };
 }
 
@@ -59,7 +81,7 @@ async function catchUp(db: Firestore, prev: Snapshot): Promise<Snapshot> {
     const ts = data[SYNCED_AT];
     if (!(ts instanceof Timestamp) || !newer(ts, lastTs.get(d.id))) continue;
     lastTs.set(d.id, ts);
-    docs.set(d.id, data);
+    docs.set(d.id, toCached(d.id, data));
   }
   for (const d of deleted.docs) {
     const ts = d.get('deletedAt');
@@ -86,12 +108,24 @@ export function getTicketSummarySnapshot(db: Firestore): Promise<Snapshot> {
   return inflight;
 }
 
-/** Warm the cache in the background (server boot). Errors are logged, not thrown. */
-export function warmTicketSummaryCache(db: Firestore) {
-  getTicketSummarySnapshot(db).catch(e => console.error('[ticket-summary-cache] warm-up failed:', e?.message || e));
-}
-
 export class UnsupportedValueError extends Error {}
+
+/**
+ * Timestamp detection that also works if the bundle contains more than one copy of the
+ * Firestore library (then `instanceof` fails across copies). A Firestore map value is always
+ * a plain object, so a non-plain object named Timestamp with toMillis() is unambiguous.
+ */
+function isTimestamp(v: unknown): v is Timestamp {
+  if (v instanceof Timestamp) return true;
+  if (typeof v !== 'object' || v === null || Object.getPrototypeOf(v) === Object.prototype) return false;
+  const t = v as { seconds?: unknown; nanoseconds?: unknown; toMillis?: unknown; constructor?: { name?: string } };
+  return (
+    t.constructor?.name === 'Timestamp' &&
+    typeof t.seconds === 'number' &&
+    typeof t.nanoseconds === 'number' &&
+    typeof t.toMillis === 'function'
+  );
+}
 
 /**
  * Encode an Admin-SDK value as JSON that the client decodes back into exactly what the
@@ -105,7 +139,7 @@ export function encodeValue(v: unknown): unknown {
     if (!Number.isFinite(v) || Object.is(v, -0)) throw new UnsupportedValueError('non-JSON number');
     return v;
   }
-  if (v instanceof Timestamp) return { [TIMESTAMP_MARKER]: [v.seconds, v.nanoseconds] };
+  if (isTimestamp(v)) return { [TIMESTAMP_MARKER]: [v.seconds, v.nanoseconds] };
   if (Array.isArray(v)) return v.map(encodeValue);
   if (typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
     const out: Record<string, unknown> = {};
