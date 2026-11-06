@@ -1,5 +1,6 @@
 import { Timestamp, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import { TIMESTAMP_MARKER } from '@/lib/ticket-scope';
+import { projectTicket, type TicketProjection } from '@/lib/ticket-projections';
 
 /**
  * Per-instance in-memory copy of ticket_summaries for /api/ticket-summaries.
@@ -30,7 +31,23 @@ export type CachedDoc = {
   item: DocumentData & { id: string };
   /** JSON.stringify([id, encodeValue(data)]), or null if the doc cannot be encoded exactly. */
   row: string | null;
+  /** Lazily built projected rows (JSON.stringify([id, encodeValue(projectTicket(data, p))])). */
+  projected: Partial<Record<TicketProjection, string | null>>;
 };
+
+/** Projected row for a document, built once per document version. */
+export function projectedRow(id: string, entry: CachedDoc, projection: TicketProjection): string | null {
+  const cached = entry.projected[projection];
+  if (cached !== undefined) return cached;
+  let row: string | null = null;
+  try {
+    row = JSON.stringify([id, encodeValue(projectTicket(entry.data as Record<string, unknown>, projection))]);
+  } catch (e) {
+    if (!(e instanceof UnsupportedValueError)) throw e;
+  }
+  entry.projected[projection] = row;
+  return row;
+}
 type Snapshot = { docs: Map<string, CachedDoc>; readTime: Timestamp };
 
 let current: Snapshot | null = null;
@@ -50,7 +67,7 @@ function toCached(id: string, data: DocumentData): CachedDoc {
     if (!(e instanceof UnsupportedValueError)) throw e;
     console.warn(`[ticket-summary-cache] ${id} cannot be encoded exactly: ${e.message}`);
   }
-  return { data, item: { ...data, id }, row };
+  return { data, item: { ...data, id }, row, projected: {} };
 }
 
 async function bootstrap(db: Firestore): Promise<Snapshot> {

@@ -2,7 +2,8 @@ import { gzip } from 'zlib';
 import { promisify } from 'util';
 import { adminAuth, adminDb } from '@/lib/firebaseAdmin';
 import { compareDocIds, inTicketScope, parseTicketScope, scopeKey, type TicketScope } from '@/lib/ticket-scope';
-import { getTicketSummarySnapshot, UnsupportedValueError } from '@/lib/server/ticket-summary-cache';
+import { getTicketSummarySnapshot, projectedRow, UnsupportedValueError } from '@/lib/server/ticket-summary-cache';
+import { isTicketProjection, type TicketProjection } from '@/lib/ticket-projections';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,7 +45,7 @@ function evict() {
   }
 }
 
-async function buildBody(scope: TicketScope): Promise<Body> {
+async function buildBody(scope: TicketScope, projection: TicketProjection | null): Promise<Body> {
   const t0 = Date.now();
   const { docs, readTime } = await getTicketSummarySnapshot(adminDb!);
   const tSnap = Date.now();
@@ -54,10 +55,12 @@ async function buildBody(scope: TicketScope): Promise<Body> {
   });
   ids.sort(compareDocIds);
   // Rows are pre-serialised per document; this is byte-identical to
-  // JSON.stringify({ v: 1, readTime: [s, n], rows: [[id, encodeValue(data)], ...] }).
+  // JSON.stringify({ v: 1, readTime: [s, n], rows: [[id, encodeValue(data)], ...] })
+  // (with data replaced by its projection when one is requested).
   const rows: string[] = new Array(ids.length);
   for (let i = 0; i < ids.length; i++) {
-    const row = docs.get(ids[i])!.row;
+    const entry = docs.get(ids[i])!;
+    const row = projection ? projectedRow(ids[i], entry, projection) : entry.row;
     if (row === null) throw new UnsupportedValueError(`document ${ids[i]} cannot be encoded exactly`);
     rows[i] = row;
   }
@@ -65,7 +68,7 @@ async function buildBody(scope: TicketScope): Promise<Body> {
   const t1 = Date.now();
   const body = await gzipAsync(json, { level: GZIP_LEVEL });
   console.log(
-    `[api/ticket-summaries] ${scopeKey(scope).slice(0, 24)} rows=${rows.length} raw=${json.length} gz=${body.length} ` +
+    `[api/ticket-summaries] ${scopeKey(scope).slice(0, 24)}${projection ? '/' + projection : ''} rows=${rows.length} raw=${json.length} gz=${body.length} ` +
       `snapshot=${tSnap - t0}ms build=${t1 - tSnap}ms gzip=${Date.now() - t1}ms readTimeAge=${Date.now() - readTime.toMillis()}ms`
   );
   return { at: Date.now(), body, readTime: `${readTime.seconds}.${readTime.nanoseconds}`, rows: rows.length };
@@ -86,20 +89,26 @@ export async function POST(req: Request) {
   }
 
   let scope: TicketScope | null;
+  let projection: TicketProjection | null = null;
   try {
-    scope = parseTicketScope((await req.json())?.scope);
+    const body = await req.json();
+    scope = parseTicketScope(body?.scope);
+    if (body?.projection !== undefined && body?.projection !== null) {
+      if (!isTicketProjection(body.projection)) return Response.json({ error: 'bad-projection' }, { status: 400 });
+      projection = body.projection;
+    }
   } catch {
     scope = null;
   }
   if (!scope) return Response.json({ error: 'bad-scope' }, { status: 400 });
 
-  const key = scopeKey(scope);
+  const key = scopeKey(scope) + (projection ? `|${projection}` : '');
   evict();
   let entry = bodyCache.get(key);
   if (!entry) {
     let pending = building.get(key);
     if (!pending) {
-      pending = buildBody(scope).finally(() => building.delete(key));
+      pending = buildBody(scope, projection).finally(() => building.delete(key));
       building.set(key, pending);
     }
     try {

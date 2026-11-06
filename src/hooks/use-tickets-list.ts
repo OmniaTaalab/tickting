@@ -17,6 +17,7 @@ import type { UseCollectionResult } from '@/firebase/firestore/use-collection';
 import { ACTIVE_STATUSES, scopeKey, type TicketScope } from '@/lib/ticket-scope';
 import { clearTicketKeepAlive, keepTicketQueryAlive } from '@/firebase/firestore/ticket-keepalive';
 import { getTicketFastStore, type FastStoreState } from '@/firebase/firestore/ticket-fast-store';
+import type { TicketProjection } from '@/lib/ticket-projections';
 
 /**
  * Live kill switch: settings/ticketSummaries { enabled: true }.
@@ -133,7 +134,14 @@ const WAITING: UseCollectionResult<any> = { data: null, isLoading: true, error: 
  */
 export function useTicketsList<T = any>(
   scope: TicketScope | null,
-  opts: { keepAlive?: boolean } = {}
+  opts: {
+    keepAlive?: boolean;
+    /**
+     * Fast path only: receive just these fields per ticket (see ticket-projections.ts).
+     * The page must read no other fields. Ignored on the listener paths (full docs).
+     */
+    projection?: TicketProjection;
+  } = {}
 ): UseCollectionResult<T> {
   const firestore = useFirestore();
   const auth = useAuth();
@@ -142,15 +150,16 @@ export function useTicketsList<T = any>(
   const enabled = flags === undefined ? undefined : flags.enabled;
   const key = scope ? scopeKey(scope) : null;
   const wantKeepAlive = opts.keepAlive === true;
+  const projection = opts.projection ?? null;
   const uid = user?.uid ?? null;
 
   // Fast path (flags.fastLoad): one compressed snapshot + incremental live changes.
   const fastForMe = !!(flags?.enabled && uid && (flags.fastLoad || flags.fastLoadUids.includes(uid)));
   const fastStore = useMemo(
-    () => (key !== null && scope && uid && fastForMe ? getTicketFastStore(firestore, auth, scope, uid) : null),
+    () => (key !== null && scope && uid && fastForMe ? getTicketFastStore(firestore, auth, scope, uid, projection) : null),
     // scope is fully described by its key; flags object identity changes on any flag change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [firestore, auth, key, uid, fastForMe, flags]
+    [firestore, auth, key, uid, fastForMe, flags, projection]
   );
   const subscribeFast = useCallback(
     (fn: () => void) => (fastStore ? fastStore.subscribe(fn) : noopSubscribe()),
