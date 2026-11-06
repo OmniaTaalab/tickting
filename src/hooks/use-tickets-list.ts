@@ -24,10 +24,19 @@ import { getTicketFastStore, type FastStoreState } from '@/firebase/firestore/ti
  * - Flipping it in the Firestore console switches every open browser immediately.
  * Returns undefined until the first answer arrives (pages show their skeleton meanwhile).
  */
-type TicketFlags = { enabled: boolean; fastLoad: boolean; fastLoadUids: string[] };
-const FLAGS_OFF: TicketFlags = { enabled: false, fastLoad: false, fastLoadUids: [] };
+export type TicketFlags = {
+  enabled: boolean;
+  fastLoad: boolean;
+  fastLoadUids: string[];
+  /** Server-paged tickets list (/api/tickets/view), everyone or an allowlist of uids. */
+  pagedTickets: boolean;
+  pagedTicketsUids: string[];
+};
+const FLAGS_OFF: TicketFlags = { enabled: false, fastLoad: false, fastLoadUids: [], pagedTickets: false, pagedTicketsUids: [] };
 const sameFlags = (a: TicketFlags, b: TicketFlags) =>
-  a.enabled === b.enabled && a.fastLoad === b.fastLoad && a.fastLoadUids.join('|') === b.fastLoadUids.join('|');
+  a.enabled === b.enabled && a.fastLoad === b.fastLoad && a.fastLoadUids.join('|') === b.fastLoadUids.join('|') &&
+  a.pagedTickets === b.pagedTickets && a.pagedTicketsUids.join('|') === b.pagedTicketsUids.join('|');
+const uidList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((u: unknown): u is string => typeof u === 'string') : []);
 let flagCache: TicketFlags | undefined;
 const flagSubscribers = new Set<(v: TicketFlags) => void>();
 let flagUnsubscribe: (() => void) | null = null;
@@ -41,11 +50,12 @@ function subscribeFlag(firestore: Firestore, cb: (v: TicketFlags) => void): () =
         const d = snap.exists() ? snap.data() : undefined;
         const enabled = d?.enabled === true;
         // fastLoad / fastLoadUids (staged rollout allowlist) only apply on top of enabled summaries.
-        const uids = Array.isArray(d?.fastLoadUids) ? d!.fastLoadUids.filter((u: unknown) => typeof u === 'string') : [];
         const next: TicketFlags = {
           enabled,
           fastLoad: enabled && d?.fastLoad === true,
-          fastLoadUids: enabled ? uids : [],
+          fastLoadUids: enabled ? uidList(d?.fastLoadUids) : [],
+          pagedTickets: enabled && d?.pagedTickets === true,
+          pagedTicketsUids: enabled ? uidList(d?.pagedTicketsUids) : [],
         };
         if (!flagCache || !sameFlags(flagCache, next)) {
           const prev = flagCache;
@@ -72,8 +82,8 @@ function subscribeFlag(firestore: Firestore, cb: (v: TicketFlags) => void): () =
 }
 
 /**
- * settings/ticketSummaries { enabled, fastLoad } — both live kill switches.
- * undefined until the first answer arrives.
+ * settings/ticketSummaries { enabled, fastLoad, fastLoadUids, pagedTickets, pagedTicketsUids }
+ * — all live kill switches. undefined until the first answer arrives.
  */
 export function useTicketFlags(): TicketFlags | undefined {
   const firestore = useFirestore();

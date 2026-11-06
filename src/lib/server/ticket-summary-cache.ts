@@ -26,6 +26,8 @@ const SYNC_INTERVAL_MS = 2_000;
 
 export type CachedDoc = {
   data: DocumentData;
+  /** { ...data, id } — the shape list pages receive from a Firestore listener. Treat as immutable. */
+  item: DocumentData & { id: string };
   /** JSON.stringify([id, encodeValue(data)]), or null if the doc cannot be encoded exactly. */
   row: string | null;
 };
@@ -48,7 +50,7 @@ function toCached(id: string, data: DocumentData): CachedDoc {
     if (!(e instanceof UnsupportedValueError)) throw e;
     console.warn(`[ticket-summary-cache] ${id} cannot be encoded exactly: ${e.message}`);
   }
-  return { data, row };
+  return { data, item: { ...data, id }, row };
 }
 
 async function bootstrap(db: Firestore): Promise<Snapshot> {
@@ -92,10 +94,9 @@ async function catchUp(db: Firestore, prev: Snapshot): Promise<Snapshot> {
   return { docs, readTime: changed.readTime };
 }
 
-/** Consistent snapshot of all summaries "as of readTime". Single-flight. */
-export function getTicketSummarySnapshot(db: Firestore): Promise<Snapshot> {
+function sync(db: Firestore, force: boolean): Promise<Snapshot> {
   if (inflight) return inflight;
-  if (current && Date.now() - lastSyncAt < SYNC_INTERVAL_MS) return Promise.resolve(current);
+  if (!force && current && Date.now() - lastSyncAt < SYNC_INTERVAL_MS) return Promise.resolve(current);
   inflight = (current ? catchUp(db, current) : bootstrap(db))
     .then(s => {
       current = s;
@@ -106,6 +107,31 @@ export function getTicketSummarySnapshot(db: Firestore): Promise<Snapshot> {
       inflight = null;
     });
   return inflight;
+}
+
+const tsLess = (a: Timestamp, b: Timestamp) =>
+  a.seconds < b.seconds || (a.seconds === b.seconds && a.nanoseconds < b.nanoseconds);
+
+/**
+ * Consistent snapshot of all summaries "as of readTime". Single-flight; served from the
+ * last sync when it is less than SYNC_INTERVAL_MS old.
+ *
+ * `minReadTime`: a client that has already observed a commit (through its own Firestore
+ * listener) passes that commit time, and the snapshot is re-synced until readTime >= it,
+ * so a response can never be older than what the client already knows. A catch-up started
+ * after the commit always sees it (transaction readTime >= commit time), so one extra sync
+ * normally suffices; bounded to avoid spinning on a bogus far-future value.
+ */
+export async function getTicketSummarySnapshot(db: Firestore, minReadTime?: Timestamp | null): Promise<Snapshot> {
+  let snap = await sync(db, false);
+  if (!minReadTime) return snap;
+  for (let attempt = 0; attempt < 3 && tsLess(snap.readTime, minReadTime); attempt++) {
+    snap = await sync(db, true);
+  }
+  if (tsLess(snap.readTime, minReadTime)) {
+    console.warn(`[ticket-summary-cache] could not reach minReadTime ${minReadTime.toMillis()} (have ${snap.readTime.toMillis()})`);
+  }
+  return snap;
 }
 
 export class UnsupportedValueError extends Error {}
