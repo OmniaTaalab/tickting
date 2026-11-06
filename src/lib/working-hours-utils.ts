@@ -148,38 +148,98 @@ export function calculateWorkingHoursElapsed(
     let totalMinutes = 0;
     let currentDay = startOfDay(start);
     const lastDay = startOfDay(end);
+    // currentDay is always a local midnight, so isSameDay(currentDay, start) is exactly
+    // currentDay.getTime() === startOfDay(start).getTime() (and likewise for end).
+    const startDayMs = currentDay.getTime();
+    const lastDayMs = lastDay.getTime();
+    // PERF: days that are neither the first nor the last day contribute a value that depends
+    // only on (day, hours config, holiday set). Memoise those per day; first/last days keep
+    // the full computation. Memo only on the global-holiday path (all app callers).
+    const memo = holidays === undefined ? getFullDayMemo(hoursToUse) : null;
 
     while (currentDay <= lastDay) {
-        // Exclude active Official Holidays from SLA calculation
-        if (isHolidayDate(currentDay, holidays)) {
-            currentDay = addDays(currentDay, 1);
-            continue;
-        }
-
-        const dayName = format(currentDay, 'EEEE');
-        const config = hoursToUse[dayName];
-
-        if (config?.isOpen) {
-            const workdayStart = parse(config.start, 'HH:mm', currentDay);
-            const workdayEnd = parse(config.end, 'HH:mm', currentDay);
-
-            // Determine intersection between (start, end) and (workdayStart, workdayEnd)
-            const actualStart = isSameDay(currentDay, start) 
-                ? (isAfter(start, workdayStart) ? start : workdayStart)
-                : workdayStart;
-            
-            const actualEnd = isSameDay(currentDay, end)
-                ? (isBefore(end, workdayEnd) ? end : workdayEnd)
-                : workdayEnd;
-
-            if (isBefore(actualStart, actualEnd)) {
-                totalMinutes += Math.max(0, differenceInMinutes(actualEnd, actualStart));
+        const ms = currentDay.getTime();
+        const isFirst = ms === startDayMs;
+        const isLast = ms === lastDayMs;
+        if (memo && !isFirst && !isLast) {
+            let minutes = memo.get(ms);
+            if (minutes === undefined) {
+                minutes = workingMinutesOnDay(currentDay, hoursToUse, holidays, null, null);
+                memo.set(ms, minutes);
             }
+            totalMinutes += minutes;
+        } else {
+            totalMinutes += workingMinutesOnDay(currentDay, hoursToUse, holidays, isFirst ? start : null, isLast ? end : null);
         }
         currentDay = addDays(currentDay, 1);
     }
 
     return totalMinutes / 60;
+}
+
+/**
+ * Working minutes contributed by one calendar day — the body of the original day loop.
+ * `start` / `end` are passed only on the day they fall on (null otherwise), which is
+ * exactly when the original code's isSameDay() checks were true.
+ */
+function workingMinutesOnDay(
+    currentDay: Date,
+    hoursToUse: WorkingHours,
+    holidays: Array<OfficialHoliday | { date: string; isActive?: boolean } | string> | Set<string> | undefined,
+    start: Date | null,
+    end: Date | null
+): number {
+    // Exclude active Official Holidays from SLA calculation
+    if (isHolidayDate(currentDay, holidays)) return 0;
+
+    const dayName = format(currentDay, 'EEEE');
+    const config = hoursToUse[dayName];
+
+    if (config?.isOpen) {
+        const workdayStart = parse(config.start, 'HH:mm', currentDay);
+        const workdayEnd = parse(config.end, 'HH:mm', currentDay);
+
+        // Determine intersection between (start, end) and (workdayStart, workdayEnd)
+        const actualStart = start
+            ? (isAfter(start, workdayStart) ? start : workdayStart)
+            : workdayStart;
+
+        const actualEnd = end
+            ? (isBefore(end, workdayEnd) ? end : workdayEnd)
+            : workdayEnd;
+
+        if (isBefore(actualStart, actualEnd)) {
+            return Math.max(0, differenceInMinutes(actualEnd, actualStart));
+        }
+    }
+    return 0;
+}
+
+// Memo of full-day working minutes: holiday Set identity (replaced wholesale by
+// setActiveHolidaysCache, never mutated) -> hours config CONTENT -> day midnight ms -> minutes.
+const fullDayMemo = new WeakMap<object, Map<string, Map<number, number>>>();
+const MAX_MEMO_CONFIGS = 64;
+
+function getFullDayMemo(hoursToUse: WorkingHours): Map<number, number> | null {
+    if (typeof hoursToUse !== 'object' || hoursToUse === null) return null;
+    let byConfig = fullDayMemo.get(globalActiveHolidays);
+    if (!byConfig) {
+        byConfig = new Map();
+        fullDayMemo.set(globalActiveHolidays, byConfig);
+    }
+    let key: string;
+    try {
+        key = JSON.stringify(hoursToUse);
+    } catch {
+        return null;
+    }
+    let perDay = byConfig.get(key);
+    if (!perDay) {
+        if (byConfig.size >= MAX_MEMO_CONFIGS) byConfig.clear();
+        perDay = new Map();
+        byConfig.set(key, perDay);
+    }
+    return perDay;
 }
 
 /**
