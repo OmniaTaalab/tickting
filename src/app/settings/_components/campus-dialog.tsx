@@ -11,7 +11,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Loader2, AlertCircle, Plus, Trash2, Layers } from 'lucide-react';
+import { Loader2, AlertCircle, Plus, Trash2, GraduationCap, Layers } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import type { Campus, School, Grade, Division, CampusSchoolConfig, CampusDivisionConfig } from '@/lib/types';
@@ -20,7 +20,8 @@ import { useUser, useCollection, useFirebase, useMemoFirebase } from '@/firebase
 import { collection, query, orderBy } from 'firebase/firestore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MultiSelect } from '@/components/multi-select';
-import { divisionsOfSchoolConfig } from '@/lib/org-structure';
+import { gradesOfSchoolConfig } from '@/lib/org-structure';
+import { cn } from '@/lib/utils';
 
 interface CampusDialogProps {
   isOpen: boolean;
@@ -28,70 +29,37 @@ interface CampusDialogProps {
   campus: Campus | null;
 }
 
-/**
- * Campus structure editor:
- *   campus -> school -> division -> grades
- * Each grade belongs to exactly one division inside a school, so a grade already
- * used by another division of the same school is disabled in the picker.
- */
-function DivisionRow({
-  config,
-  usedGradeIds,
-  divisions,
-  grades,
-  onChange,
-  onRemove,
-}: {
-  config: CampusDivisionConfig;
-  usedGradeIds: string[];
-  divisions: Division[];
-  grades: Grade[];
-  onChange: (next: CampusDivisionConfig) => void;
-  onRemove: () => void;
-}) {
-  const gradeOptions = useMemo(
-    () =>
-      grades.map((g) => ({
-        id: g.id,
-        label: g.name,
-        disabled: usedGradeIds.includes(g.id) && !config.gradeIds.includes(g.id),
-      })),
-    [grades, usedGradeIds, config.gradeIds]
-  );
+const NONE = '__none__';
 
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.4fr_auto] gap-2 items-start">
-      <Select onValueChange={(divisionId) => onChange({ ...config, divisionId })} value={config.divisionId || undefined}>
-        <SelectTrigger className="bg-white h-10">
-          <SelectValue placeholder="Division" />
-        </SelectTrigger>
-        <SelectContent>
-          {divisions.map((d) => (
-            <SelectItem key={d.id} value={d.id}>
-              <span className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: d.color || '#94a3b8' }} />
-                {d.name}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <MultiSelect
-        options={gradeOptions}
-        value={config.gradeIds}
-        onChange={(gradeIds) => onChange({ ...config, gradeIds })}
-        placeholder="Grades in this division"
-        className="min-h-10"
-        maxBadges={5}
-        bulkActions
-      />
-      <Button type="button" variant="ghost" size="icon" onClick={onRemove} className="h-10 w-10 text-slate-400 hover:text-red-500 hover:bg-red-50">
-        <Trash2 className="h-4 w-4" />
-      </Button>
-    </div>
-  );
+/** grade -> division lookup from the stored divisions[] shape. */
+function divisionByGrade(config: CampusSchoolConfig): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const d of config.divisions || []) {
+    if (!d?.divisionId) continue;
+    for (const g of d.gradeIds || []) map.set(g, d.divisionId);
+  }
+  return map;
 }
 
+/** Rebuild the stored shape from "grades offered" + "division per grade". */
+function buildConfig(schoolId: string, gradeIds: string[], byGrade: Map<string, string>): CampusSchoolConfig {
+  const groups = new Map<string, string[]>();
+  for (const g of gradeIds) {
+    const d = byGrade.get(g);
+    if (!d) continue;
+    groups.set(d, [...(groups.get(d) || []), g]);
+  }
+  const divisions: CampusDivisionConfig[] = Array.from(groups, ([divisionId, grades]) => ({ divisionId, gradeIds: grades }));
+  return { schoolId, gradeIds, divisions };
+}
+
+/**
+ * One school on the campus:
+ *   1. which grades the school offers here,
+ *   2. which division each grade belongs to (one division per grade).
+ * Divisions are derived from the per-grade choice, so there is no separate
+ * "add division" step to get wrong.
+ */
 function SchoolCard({
   config,
   schools,
@@ -109,15 +77,37 @@ function SchoolCard({
   onChange: (next: CampusSchoolConfig) => void;
   onRemove: () => void;
 }) {
-  const divisionConfigs = divisionsOfSchoolConfig(config);
-  const usedGradeIds = divisionConfigs.flatMap((d) => d.gradeIds);
-  const usedDivisionIds = divisionConfigs.map((d) => d.divisionId);
+  const offered = gradesOfSchoolConfig(config);
+  const byGrade = divisionByGrade(config);
+  const gradeName = useMemo(() => new Map(grades.map((g) => [g.id, g.name])), [grades]);
+  const divisionOf = (id: string) => divisions.find((d) => d.id === id);
+  const unassigned = offered.filter((g) => !byGrade.get(g));
+  const [bulkDivision, setBulkDivision] = useState<string>('');
 
-  const setDivisions = (next: CampusDivisionConfig[]) =>
-    onChange({ ...config, divisions: next, gradeIds: Array.from(new Set(next.flatMap((d) => d.gradeIds))) });
+  const setOffered = (gradeIds: string[]) => {
+    const next = new Map(byGrade);
+    for (const g of Array.from(next.keys())) if (!gradeIds.includes(g)) next.delete(g);
+    onChange(buildConfig(config.schoolId, gradeIds, next));
+  };
+  const setDivision = (gradeId: string, divisionId: string) => {
+    const next = new Map(byGrade);
+    if (divisionId === NONE) next.delete(gradeId);
+    else next.set(gradeId, divisionId);
+    onChange(buildConfig(config.schoolId, offered, next));
+  };
+  const assignUnassigned = () => {
+    if (!bulkDivision) return;
+    const next = new Map(byGrade);
+    for (const g of unassigned) next.set(g, bulkDivision);
+    onChange(buildConfig(config.schoolId, offered, next));
+    setBulkDivision('');
+  };
+
+  // Keep grade rows in the order of the global grade list.
+  const orderedOffered = grades.filter((g) => offered.includes(g.id)).map((g) => g.id);
 
   return (
-    <div className="p-4 bg-slate-50 border rounded-xl space-y-3">
+    <div className="p-4 bg-slate-50 border rounded-xl space-y-4">
       <div className="flex items-end gap-3">
         <div className="flex-1 space-y-1.5">
           <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">School</Label>
@@ -139,36 +129,86 @@ function SchoolCard({
         </Button>
       </div>
 
-      <div className="space-y-2 ps-3 border-s-2 border-slate-200">
-        <div className="flex items-center justify-between">
-          <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-            <Layers className="h-3 w-3" /> Divisions and their grades
-          </Label>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[#1e3a8a] font-bold text-xs"
-            onClick={() => setDivisions([...divisionConfigs, { divisionId: '', gradeIds: [] }])}
-          >
-            <Plus className="h-3.5 w-3.5 me-1" /> Add division
-          </Button>
-        </div>
-        {divisionConfigs.length === 0 && (
-          <p className="text-xs text-slate-400 italic py-2">No divisions yet. Add one and pick the grades that belong to it.</p>
-        )}
-        {divisionConfigs.map((div, idx) => (
-          <DivisionRow
-            key={idx}
-            config={div}
-            usedGradeIds={usedGradeIds}
-            divisions={divisions.filter((d) => !usedDivisionIds.includes(d.id) || d.id === div.divisionId)}
-            grades={grades}
-            onChange={(next) => setDivisions(divisionConfigs.map((d, i) => (i === idx ? next : d)))}
-            onRemove={() => setDivisions(divisionConfigs.filter((_, i) => i !== idx))}
-          />
-        ))}
+      <div className="space-y-1.5">
+        <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+          <GraduationCap className="h-3 w-3" /> Grades offered by this school
+        </Label>
+        <MultiSelect
+          options={grades.map((g) => ({ id: g.id, label: g.name }))}
+          value={offered}
+          onChange={setOffered}
+          placeholder="Select the grades this school has on this campus"
+          className="min-h-10"
+          maxBadges={8}
+          bulkActions
+          searchable
+        />
       </div>
+
+      {orderedOffered.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+              <Layers className="h-3 w-3" /> Division of each grade
+              {unassigned.length > 0 && (
+                <span className="text-amber-600 normal-case tracking-normal font-semibold ms-1">· {unassigned.length} without a division</span>
+              )}
+            </Label>
+            {unassigned.length > 0 && (
+              <div className="flex items-center gap-1">
+                <Select value={bulkDivision || undefined} onValueChange={setBulkDivision}>
+                  <SelectTrigger className="h-8 w-[190px] bg-white text-xs">
+                    <SelectValue placeholder="Set unassigned to…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {divisions.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button type="button" size="sm" variant="outline" className="h-8 text-xs font-bold" disabled={!bulkDivision} onClick={assignUnassigned}>
+                  <Plus className="h-3 w-3 me-1" /> Apply
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 ps-1">
+            {orderedOffered.map((gradeId) => {
+              const current = byGrade.get(gradeId);
+              const div = current ? divisionOf(current) : undefined;
+              return (
+                <div key={gradeId} className="flex items-center gap-2">
+                  <span className={cn('text-xs font-semibold w-[118px] shrink-0 truncate', current ? 'text-slate-700' : 'text-amber-600')} title={gradeName.get(gradeId) || gradeId}>
+                    {gradeName.get(gradeId) || gradeId}
+                  </span>
+                  <Select value={current || NONE} onValueChange={(v) => setDivision(gradeId, v)}>
+                    <SelectTrigger className={cn('h-8 bg-white text-xs', !current && 'border-amber-300')}>
+                      <SelectValue>
+                        <span className="flex items-center gap-2">
+                          {div && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: div.color || '#94a3b8' }} />}
+                          {div ? div.name : <span className="text-slate-400">No division</span>}
+                        </span>
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE}><span className="text-slate-400">No division</span></SelectItem>
+                      {divisions.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>
+                          <span className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: d.color || '#94a3b8' }} />
+                            {d.name}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -182,7 +222,7 @@ export function CampusDialog({ isOpen, onClose, campus }: CampusDialogProps) {
 
   const [name, setName] = useState(campus?.name || '');
   const [schoolConfigs, setSchoolConfigs] = useState<CampusSchoolConfig[]>(
-    (campus?.schoolConfigs || []).map((c) => ({ ...c, divisions: divisionsOfSchoolConfig(c) }))
+    (campus?.schoolConfigs || []).map((c) => ({ schoolId: c.schoolId, gradeIds: gradesOfSchoolConfig(c), divisions: c.divisions || [] }))
   );
 
   const schoolsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'schools'), orderBy('name', 'asc')) : null), [firestore]);
@@ -204,13 +244,8 @@ export function CampusDialog({ isOpen, onClose, campus }: CampusDialogProps) {
     }
   }, [state, toast, onClose]);
 
-  const incomplete = useMemo(
-    () =>
-      schoolConfigs.some(
-        (c) => !c.schoolId || divisionsOfSchoolConfig(c).some((d) => !d.divisionId || d.gradeIds.length === 0)
-      ),
-    [schoolConfigs]
-  );
+  const missingSchool = schoolConfigs.some((c) => !c.schoolId);
+  const unassignedCount = schoolConfigs.reduce((n, c) => n + gradesOfSchoolConfig(c).filter((g) => !divisionByGrade(c).get(g)).length, 0);
 
   const handleAction = (formData: FormData) => {
     if (!currentUser) return;
@@ -228,7 +263,7 @@ export function CampusDialog({ isOpen, onClose, campus }: CampusDialogProps) {
         <DialogHeader className="p-6 pb-0 text-start">
           <DialogTitle className="text-xl font-bold">{campus ? 'Edit Campus' : 'Add New Campus'}</DialogTitle>
           <DialogDescription>
-            Schools on this campus, the divisions inside each school, and the grades each division covers.
+            For each school on this campus: the grades it offers, and the division each grade belongs to.
             Email queues and employee scopes are derived from this structure.
           </DialogDescription>
         </DialogHeader>
@@ -294,9 +329,10 @@ export function CampusDialog({ isOpen, onClose, campus }: CampusDialogProps) {
                 </div>
               )}
             </div>
-            {incomplete && (
+            {missingSchool && <p className="text-[11px] text-amber-600 font-medium">Every row needs a school selected.</p>}
+            {!missingSchool && unassignedCount > 0 && (
               <p className="text-[11px] text-amber-600 font-medium">
-                Every school needs a name, and every division needs a division and at least one grade.
+                {unassignedCount} grade(s) have no division. They stay available on the school, but email queues and employee scopes only route through divisions.
               </p>
             )}
           </div>
@@ -305,7 +341,7 @@ export function CampusDialog({ isOpen, onClose, campus }: CampusDialogProps) {
             <Button type="button" variant="ghost" onClick={onClose} disabled={isPending}>Cancel</Button>
             <Button
               type="submit"
-              disabled={isPending || !name || schoolConfigs.length === 0 || incomplete}
+              disabled={isPending || !name || schoolConfigs.length === 0 || missingSchool}
               className="bg-[#1e3a8a] text-white font-bold px-8 h-11"
             >
               {isPending && <Loader2 className="me-2 animate-spin h-4 w-4" />}
