@@ -16,5 +16,11 @@
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ]
     }
+  ],
+  "firestore": [
+    {
+      "database": "staging",
+      "rules": "firestore.rules"
+    }
   ]
 }
