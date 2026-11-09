@@ -89,6 +89,12 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+    // Settings > Email Configurations. Read by staff for scope pickers; written only by
+    // server actions (Admin SDK) and the Cloud Functions sync status.
+    match /mailboxes/{mailboxId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if false;
+    }
     match /campuses/{campusId} {
       allow get, list: if true;
       allow create, update, delete: if isAdmin();

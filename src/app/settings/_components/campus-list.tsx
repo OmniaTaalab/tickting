@@ -12,7 +12,8 @@ import { Button } from '@/components/ui/button';
 import { Pencil, PlusCircle, Trash2, Building2, School as SchoolIcon } from 'lucide-react';
 import { useCollection, useFirebase, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy } from 'firebase/firestore';
-import type { Campus, School, Grade } from '@/lib/types';
+import type { Campus, School, Grade, Division } from '@/lib/types';
+import { divisionsOfSchoolConfig, unassignedGradesOfSchoolConfig } from '@/lib/org-structure';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CampusDialog } from './campus-dialog';
 import { DeleteDialog } from './delete-dialog';
@@ -44,6 +45,9 @@ export function CampusList() {
   );
   const { data: grades } = useCollection<Grade>(gradesQuery);
   const gradesMap = useMemo(() => new Map(grades?.map(g => [g.id, g.name])), [grades]);
+  const divisionsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'divisions'), orderBy('name', 'asc')) : null, [firestore]);
+  const { data: divisions } = useCollection<Division>(divisionsQuery);
+  const divisionsMap = useMemo(() => new Map((divisions || []).map(d => [d.id, d])), [divisions]);
 
   const handleEdit = (campus: Campus) => {
     setSelectedCampus(campus);
@@ -118,13 +122,31 @@ export function CampusList() {
                                         <SchoolIcon className="h-3 w-3 text-[#1e3a8a]" />
                                         {schoolsMap.get(config.schoolId) || 'Unknown School'}
                                     </div>
-                                    <div className="flex flex-wrap gap-1">
-                                        {config.gradeIds.map(gid => (
-                                            <Badge key={gid} variant="outline" className="text-[9px] font-bold px-1.5 h-4 bg-slate-50 border-slate-200 text-slate-500">
-                                                {gradesMap.get(gid) || gid}
-                                            </Badge>
-                                        ))}
-                                    </div>
+                                    {divisionsOfSchoolConfig(config).map((div) => (
+                                        <div key={div.divisionId} className="flex flex-wrap items-center gap-1 ps-4">
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 me-1">
+                                                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: divisionsMap.get(div.divisionId)?.color || '#94a3b8' }} />
+                                                {divisionsMap.get(div.divisionId)?.name || div.divisionId}:
+                                            </span>
+                                            {div.gradeIds.map(gid => (
+                                                <Badge key={gid} variant="outline" className="text-[9px] font-bold px-1.5 h-4 bg-slate-50 border-slate-200 text-slate-500">
+                                                    {gradesMap.get(gid) || gid}
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                    ))}
+                                    {unassignedGradesOfSchoolConfig(config).length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-1 ps-4">
+                                            <span className="text-[10px] font-bold text-amber-600 me-1">
+                                                {divisionsOfSchoolConfig(config).length ? 'Not in a division:' : 'Grades:'}
+                                            </span>
+                                            {unassignedGradesOfSchoolConfig(config).map(gid => (
+                                                <Badge key={gid} variant="outline" className="text-[9px] font-bold px-1.5 h-4 bg-amber-50 border-amber-200 text-amber-700">
+                                                    {gradesMap.get(gid) || gid}
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             ))
                         ) : (

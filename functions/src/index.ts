@@ -2,6 +2,15 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentUpdated, onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
 import { mirrorTicketSummary as mirrorTicketSummaryDoc } from "./ticket-summary.js";
 import { defineSecret } from "firebase-functions/params";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import {
+    loadMailboxConfigs,
+    getCachedMailboxConfigs,
+    recordMailboxSync,
+    MAILBOXES_COLLECTION,
+    type MailboxConfig,
+    type MailboxRoute,
+} from "./mailboxes.js";
 import * as admin from "firebase-admin";
 import { getStorage } from "firebase-admin/storage";
 import { getFirestore } from "firebase-admin/firestore";
@@ -14,29 +23,6 @@ admin.initializeApp();
 const BASE_URL = "https://crm.nis-egypt.com";
 const DEFAULT_SENDER_EMAIL = "info@nis-egypt.com";
 
-const DEPARTMENT_ONLY_IDS = new Set([
-    "PjGUdEp51xWc0fBKEooa", // General Support
-    "4K7BgUVmGi52sqKJNpB1", // Operations
-]);
-
-type MailboxRoute = {
-    division: string;
-    school: string;
-    grades: string[];
-};
-
-type MailboxConfig = {
-    email: string;
-    department: string;
-    campusId?: string;
-    campusName?: string;
-    routes?: MailboxRoute[];
-    enabled?: boolean;
-    // Director-style queues: assign only to these staff (from the CRM sheet),
-    // without requiring the email text to identify a single school.
-    assignTo?: string[];
-};
-
 type ResolvedRouting = {
     selectedRoute: MailboxRoute | null;
     schoolName: string | null;
@@ -46,1020 +32,6 @@ type ResolvedRouting = {
     divisions: string[];
     allowedGrades: string[];
 };
-
-function academicMailbox(
-    email: string,
-    campusId: string,
-    campusName: string,
-    routes: MailboxRoute[],
-    assignTo?: string[]
-): MailboxConfig {
-    return {
-        email,
-        department: "Academic",
-        campusId,
-        campusName,
-        routes,
-        enabled: true,
-        ...(assignTo?.length ? { assignTo: assignTo.map((e) => e.toLowerCase()) } : {}),
-    };
-}
-// Real taxonomy names from the CRM settings. These are not Firebase document IDs.
-// For all-campus queues, only use valid campus/school/division/grade mappings
-// when the routing selector has enough information to identify a unique route.
-const ALL_SCHOOL_NAMES = [
-    "American", "British", "IB",
-    "International Girls Only, American", "International Girls Only, British",
-    "National English", "National French",
-];
-
-const ALL_DIVISION_NAMES = [
-    "Academic Dean's Office", "Director's Office", "Early Years",
-    "Elementary", "High School", "Middle School",
-];
-
-const ALL_GRADE_NAMES = [
-    "Nursery", "Pre school", "KG1", "KG2",
-    "Foundation Stage 1", "Foundation Stage 2",
-    ...Array.from({ length: 12 }, (_, i) => `Grade${i + 1}`),
-    ...Array.from({ length: 13 }, (_, i) => `Year${i + 1}`),
-];
-
-// El-Sherouk only (CRM_Academic_Division_Updated_2): the IB school and its
-// grades. CRM Settings must contain these exact names (plus Lower Primary,
-// Upper Primary, Lower Secondary, Upper Secondary) or tickets stay in Queue.
-const SHOROUK_IB_SCHOOL = "Int'l Bac";
-const SHOROUK_IB_GRADES = ["FP1", "FP2", "DP1", "DP2"];
-const SHOROUK_ALL_SCHOOL_NAMES = [...ALL_SCHOOL_NAMES, SHOROUK_IB_SCHOOL];
-const SHOROUK_ALL_GRADE_NAMES = [...ALL_GRADE_NAMES, ...SHOROUK_IB_GRADES];
-
-const MAILBOXES: MailboxConfig[] = [
-
-    // Collection / Accounting
-    {
-        email: "accounting.1stsettlement@nis-egypt.com",
-        department: "Collection",
-        campusId: "PbHP5tPr5EjuWAs6NtAn",
-        campusName: "1st Settlement",
-        enabled: true,
-    },
-    {
-        email: "accounting.shorouk@nis-egypt.com",
-        department: "Collection",
-        campusId: "yo3Wwso55VNU0wG3Oq4S",
-        campusName: "El-Sherouk",
-        enabled: true,
-    },
-    {
-        email: "accounting.6thoctober@nis-egypt.com",
-        department: "Collection",
-        campusId: "5c1TfIe5ePQhicggJrP8",
-        campusName: "6th October",
-        enabled: true,
-    },
-    {
-        email: "Accounting.NasrCity@nis-egypt.com",
-        department: "Collection",
-        campusId: "daZr2WQAV0WJlOGPpKFV",
-        campusName: "Nasr City",
-        enabled: true,
-    },
-    {
-        email: "accounting.newcapital.int@nis-egypt.com",
-        department: "Collection",
-        campusId: "Qlqa5RuNvLuFuPAFnTmF",
-        campusName: "New Capital International",
-        enabled: true,
-    },
-    {
-        email: "accounting.newcapital.national@nis-egypt.com",
-        department: "Collection",
-        campusId: "NySuXzwGRFnLiO3pAxie",
-        campusName: "New Capital National",
-        enabled: true,
-    },
-    {
-        email: "accounting.portosaid@nis-egypt.com",
-        department: "Collection",
-        campusId: "ZKLWPTV7ip6bC6dK95L4",
-        campusName: "Porto Said",
-        enabled: true,
-    },
-
-    // Admissions
-    {
-        email: "admission.newcapital.national@nis-egypt.com",
-        department: "Admissions",
-        campusId: "NySuXzwGRFnLiO3pAxie",
-        campusName: "New Capital National",
-        enabled: true,
-    },
-    {
-        email: "admission.newcapital.int@nis-egypt.com",
-        department: "Admissions",
-        campusId: "Qlqa5RuNvLuFuPAFnTmF",
-        campusName: "New Capital International",
-        enabled: true,
-    },
-    {
-        email: "admission.shorouk@nis-egypt.com",
-        department: "Admissions",
-        campusId: "yo3Wwso55VNU0wG3Oq4S",
-        campusName: "El-Sherouk",
-        enabled: true,
-    },
-    {
-        email: "admission.1stsettlement@nis-egypt.com",
-        department: "Admissions",
-        campusId: "PbHP5tPr5EjuWAs6NtAn",
-        campusName: "1st Settlement",
-        enabled: true,
-    },
-    {
-        email: "admission.6thoctober@nis-egypt.com",
-        department: "Admissions",
-        campusId: "5c1TfIe5ePQhicggJrP8",
-        campusName: "6th October",
-        enabled: true,
-    },
-    {
-        email: "admission.portosaid@nis-egypt.com",
-        department: "Admissions",
-        campusId: "ZKLWPTV7ip6bC6dK95L4",
-        campusName: "Porto Said",
-        enabled: true,
-    },
-    {
-        email: "admission.nasrcity@nis-egypt.com",
-        department: "Admissions",
-        campusId: "daZr2WQAV0WJlOGPpKFV",
-        campusName: "Nasr City",
-        enabled: true,
-    },
-
-    // Shared queues
-    {
-        email: "Operations@nis-egypt.com",
-        department: "Operations",
-        enabled: true,
-    },
-    {
-        email: "Info@nis-egypt.com",
-        department: "General support",
-        enabled: true,
-    },
-    {
-        email: "Admission@nis-egypt.com",
-        department: "General support",
-        enabled: true,
-    },
-    // Added academic mailboxes: 1st Settlement and Porto Said.
-    // Do not use the literal values "Both", "All" or "All School" as taxonomy names.
-    academicMailbox(
-        "ad.tg@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [{
-            school: "American",
-            division: "Academic Dean's Office",
-            grades: Array.from({ length: 12 }, (_, i) => `Grade${i + 1}`),
-        }]
-    ),
-    academicMailbox(
-        "dr.tg@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        ALL_SCHOOL_NAMES.map((school) => ({
-            school,
-            division: "Director's Office",
-            grades: [...ALL_GRADE_NAMES],
-        })),
-        ["ahmed.zayed@nis-egypt.com"]
-    ),
-    ...([
-        ["abdelnasser.ahmed@nis-egypt.com", ["abdelnasser.ahmed@nis-egypt.com"]],
-        ["hagar.elnaggar@nis-egypt.com", ["hagar.elnaggar@nis-egypt.com"]],
-        ["portosaid.director's.office@nis-egypt.com", ["mayar.radwan@nis-egypt.com", "omnia.hamdon@nis-egypt.com"]],
-    ] as Array<[string, string[]]>).map(([email, assignTo]): MailboxConfig => academicMailbox(
-        email,
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        ALL_SCHOOL_NAMES.flatMap((school) =>
-            ALL_DIVISION_NAMES.map((division) => ({
-                school,
-                division,
-                grades: [...ALL_GRADE_NAMES],
-            }))
-        ),
-        assignTo
-    )),
-
-    // Academic queues
-    academicMailbox(
-        "ks1-2-nci-br@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ks3.ca@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ig.ca@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "nca.elementaryoffice@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ca.am.ms@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ca.high-school@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ey.nci@nis-egypt.com",
-        "Qlqa5RuNvLuFuPAFnTmF",
-        "New Capital International",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            },
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "kg.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Early Years",
-                school: "National English",
-                grades: ["Pre school", "KG1", "KG2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "lowerprimary.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade1", "Grade2", "Grade3"],
-            }
-        ]
-    ),
-
-    // Not in CRM_Academic_Division_Updated_2: disabled, Grade3-4 now go to
-    // lowerprimary.ncn / upperprimary.ncn.
-    {
-        ...academicMailbox(
-        "primary.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade3", "Grade4"],
-            }
-        ]
-        ),
-        enabled: false,
-    },
-
-    academicMailbox(
-        "upperprimary.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "preparatory.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "Middle School",
-                school: "National English",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "secondary.ncn@nis-egypt.com",
-        "NySuXzwGRFnLiO3pAxie",
-        "New Capital National",
-        [
-            {
-                division: "High School",
-                school: "National English",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "nis-earlyyears-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            },
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "nis-keystage1-2-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "nis-keystage3-4-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            },
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "nis-elementaryschool-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "nis-middleschool-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "nis-highschool-oc@nis-egypt.com",
-        "5c1TfIe5ePQhicggJrP8",
-        "6th October",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ey.tg@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "es.tg@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ms.tg@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "hs.tg@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ib.tg@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "High School",
-                school: "IB",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "kgfrench.tag@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Early Years",
-                school: "National French",
-                grades: ["Pre school", "KG1", "KG2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "primairefrench.tag@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Elementary",
-                school: "National French",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "preparatoirefrench.tag@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Middle School",
-                school: "National French",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "secondairefrench.tag@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "High School",
-                school: "National French",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "kgnational.tag@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Early Years",
-                school: "National English",
-                grades: ["KG1", "KG2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "lowerprimarynational.tag@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade1", "Grade2", "Grade3"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "upperprimarynational.tag@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "preparatorynational@nis-egypt.com",
-        "PbHP5tPr5EjuWAs6NtAn",
-        "1st Settlement",
-        [
-            {
-                division: "Middle School",
-                school: "National English",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ey.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            },
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "el.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            },
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "pr.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            },
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ms-am.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "hs-am.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ms-br.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "hs-br.ps@nis-egypt.com",
-        "ZKLWPTV7ip6bC6dK95L4",
-        "Porto Said",
-        [
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    // El-Sherouk academic queues (CRM_Academic_Division_Updated_2).
-    academicMailbox(
-        "ey.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Early Years",
-                school: "American",
-                grades: ["Pre school", "KG1", "KG2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "es.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Elementary",
-                school: "American",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ms.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Middle School",
-                school: "American",
-                grades: ["Grade6", "Grade7", "Grade8"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "hs.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "High School",
-                school: "American",
-                grades: ["Grade9", "Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ks1.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Lower Primary",
-                school: "British",
-                grades: ["Grade1", "Grade2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ks2.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Upper Primary",
-                school: "British",
-                grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ks3.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Lower Secondary",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ig.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "Upper Secondary",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "ib.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        [
-            {
-                division: "International Baccalaureate",
-                school: SHOROUK_IB_SCHOOL,
-                grades: [...SHOROUK_IB_GRADES],
-            }
-        ]
-    ),
-
-    // Director's Office: every school and grade on the El-Sherouk campus.
-    academicMailbox(
-        "dir.shorouk@nis-egypt.com",
-        "yo3Wwso55VNU0wG3Oq4S",
-        "El-Sherouk",
-        SHOROUK_ALL_SCHOOL_NAMES.map((school) => ({
-            school,
-            division: "Director's Office",
-            grades: [...SHOROUK_ALL_GRADE_NAMES],
-        })),
-        ["mai.abdallah@nis-egypt.com", "sally.mahmoud@nis-egypt.com", "basma.nada@nis-egypt.com"]
-    ),
-
-    academicMailbox(
-        "kg.nc@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Early Years",
-                school: "National English",
-                grades: ["Pre school", "KG1", "KG2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "lowerprimary.nc@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade1", "Grade2"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "upperprimary.nc-g@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "upperprimary.nc-b@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Elementary",
-                school: "National English",
-                grades: ["Grade3", "Grade4", "Grade5", "Grade6"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "preparatory.nc-g@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Middle School",
-                school: "National English",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "preparatory.nc-b@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Middle School",
-                school: "National English",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "secondary.nc-g@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "High School",
-                school: "National English",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "secondary.nc-b@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "High School",
-                school: "National English",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    ),
-
-    academicMailbox(
-        "br-nc.office@nis-egypt.com",
-        "daZr2WQAV0WJlOGPpKFV",
-        "Nasr City",
-        [
-            {
-                division: "Early Years",
-                school: "British",
-                grades: ["Foundation Stage 1", "Foundation Stage 2"],
-            },
-            {
-                division: "Elementary",
-                school: "British",
-                grades: ["Grade1", "Grade2", "Grade3", "Grade4", "Grade5", "Grade6"],
-            },
-            {
-                division: "Middle School",
-                school: "British",
-                grades: ["Grade7", "Grade8", "Grade9"],
-            },
-            {
-                division: "High School",
-                school: "British",
-                grades: ["Grade10", "Grade11", "Grade12"],
-            }
-        ]
-    )
-];
 
 function normalizeMessageId(value?: string | null): string | null {
     if (!value) return null;
@@ -1261,13 +233,13 @@ async function sendHtmlEmail(args: {
 /** Resolve sender for form-created tickets using the same mailbox definitions
  * used by the Gmail synchronization process. Fail closed on missing/ambiguous
  * routes instead of sending as the wrong department or campus. */
-function getSenderMailbox(ticket: any): string {
+async function getSenderMailbox(ticket: any): Promise<string> {
     // Tickets received by email must reply from their original inbox.
     if (ticket?.originalRecipientEmail) return ticket.originalRecipientEmail;
 
     const department = normalizeRoutingText(ticket?.departmentName || ticket?.categoryName || "");
     const campusId = String(ticket?.campusId || "");
-    const candidates = MAILBOXES.filter((mailbox) =>
+    const candidates = (await getCachedMailboxConfigs(admin.firestore())).filter((mailbox) =>
         mailbox.enabled !== false &&
         normalizeRoutingText(mailbox.department) === department &&
         (!mailbox.campusId || mailbox.campusId === campusId)
@@ -1514,16 +486,27 @@ function employeeMatchesMailbox(
 ): boolean {
     if (employee.role !== "Employee" || employee.status !== "Available") return false;
     if (!employee.activeSessionId) return false;
+    void departmentId;
 
-    // Department-only queues do not require campus, school, division, grade, or mailbox membership.
-    if (DEPARTMENT_ONLY_IDS.has(departmentId)) return true;
+    // Staff attached to specific mailboxes (Settings > Employees > "by mailbox")
+    // only receive tickets from those mailboxes.
+    const mailboxEmails = collectEmployeeValues(
+        employee.mailboxEmails, employee.queueEmails, employee.mailboxes
+    );
+    if (mailboxEmails.length &&
+        !mailboxEmails.some((email) => email.toLowerCase() === mailbox.email.toLowerCase())) {
+        return false;
+    }
+
+    // Category-wide queues (no campus) do not require campus, school, division or grade.
+    if (mailbox.scope === "department") return true;
 
     const campuses = collectEmployeeValues(employee.campusId, employee.campusIds);
     if (!mailbox.campusId || !campuses.includes(mailbox.campusId)) return false;
 
     // Campus-only mailboxes (e.g. Admissions/Collection) do not require academic scope.
     // Role, Available status, active session, department (query), and campus still apply.
-    if (mailbox.department !== "Academic" && !(mailbox.routes?.length)) return true;
+    if (mailbox.scope === "campus") return true;
 
     // Director-style queues: only the staff listed in the CRM sheet, matched on
     // campus and (when the queue has one division) division. School and grade
@@ -1568,13 +551,6 @@ function employeeMatchesMailbox(
         taxonomy.grades
     ))) return false;
 
-    const mailboxEmails = collectEmployeeValues(
-        employee.mailboxEmails, employee.queueEmails, employee.mailboxes
-    );
-    if (mailboxEmails.length &&
-        !mailboxEmails.some((email) => email.toLowerCase() === mailbox.email.toLowerCase())) {
-        return false;
-    }
     return true;
 }
 
@@ -1900,9 +876,11 @@ export const syncEmails = onSchedule(
                 ...(doc.data() as any),
             }));
 
-            const enabledMailboxes = MAILBOXES.filter(
-                (item) => item.enabled !== false
-            );
+            const mailboxConfigs = await loadMailboxConfigs(db);
+            const enabledMailboxes = mailboxConfigs.filter((item) => item.enabled);
+            if (!enabledMailboxes.length) {
+                console.warn("No enabled mailboxes in Settings > Email Configurations; nothing to sync.");
+            }
 
             await runWithConcurrency(
                 enabledMailboxes,
@@ -1932,6 +910,10 @@ export const syncEmails = onSchedule(
                         console.log(
                             `SUCCESS MAILBOX: ${mailbox.email} - ${messages.length} messages`
                         );
+                        await recordMailboxSync(db, mailbox.id, {
+                            status: "ok",
+                            messageCount: messages.length,
+                        });
 
                         for (const msg of messages) {
                             if (!msg.id) continue;
@@ -2189,6 +1171,10 @@ export const syncEmails = onSchedule(
                                 const targetDept =
                                     allDepts.find(
                                         (department) =>
+                                            department.id === mailbox.departmentId
+                                    ) ||
+                                    allDepts.find(
+                                        (department) =>
                                             department.name
                                                 ?.trim()
                                                 .toLowerCase() ===
@@ -2321,7 +1307,7 @@ export const syncEmails = onSchedule(
                                 const gradeIds = routing.gradeName
                                     ? taxonomyIds(taxonomy.grades, routing.gradeName)
                                     : [];
-                                if (mailbox.department === "Academic" && !mailbox.assignTo?.length &&
+                                if (mailbox.scope === "academic" && !mailbox.assignTo?.length &&
                                     (!routing.selectedRoute || schoolIds.length !== 1 || divisionIds.length !== 1 ||
                                         !selectedGradeNames.length ||
                                         selectedGradeNames.some((grade) => !taxonomyIds(taxonomy.grades, grade).length))) {
@@ -2337,23 +1323,20 @@ export const syncEmails = onSchedule(
                                 let status: "Queue" | "Open" = "Queue";
 
                                 const departmentOnlyMailbox =
-                                    DEPARTMENT_ONLY_IDS.has(targetDept.id) &&
-                                    !mailbox.campusId &&
-                                    !mailbox.routes?.length;
+                                    mailbox.scope === "department";
 
                                 const campusOnlyMailbox =
-                                    mailbox.department !== "Academic" &&
-                                    !mailbox.routes?.length &&
+                                    mailbox.scope === "campus" &&
                                     Boolean(mailbox.campusId);
 
                                 const directorMailbox =
-                                    mailbox.department === "Academic" &&
+                                    mailbox.scope === "academic" &&
                                     Boolean(mailbox.assignTo?.length) &&
                                     divisionIds.length <= 1;
 
                                 const academicRouteValid =
                                     directorMailbox ||
-                                    mailbox.department === "Academic" &&
+                                    mailbox.scope === "academic" &&
                                     Boolean(routing.selectedRoute) &&
                                     schoolIds.length === 1 &&
                                     divisionIds.length === 1 &&
@@ -2418,8 +1401,7 @@ export const syncEmails = onSchedule(
                                                     {};
 
                                                 const assignmentKey =
-                                                    mailbox.department ===
-                                                        "Academic"
+                                                    mailbox.scope === "academic"
                                                         ? `${mailbox.campusId ||
                                                         "all"
                                                         }_${safeMailbox}`
@@ -2596,6 +1578,7 @@ export const syncEmails = onSchedule(
 
                                     mailboxEmail:
                                         mailbox.email,
+                                    mailboxId: mailbox.id,
                                     originalRecipientEmail:
                                         mailbox.email,
 
@@ -2692,6 +1675,10 @@ export const syncEmails = onSchedule(
                             `MAILBOX FAILED: ${mailbox.email}`,
                             mailboxError
                         );
+                        await recordMailboxSync(db, mailbox.id, {
+                            status: "failed",
+                            error: String((mailboxError as any)?.message || mailboxError),
+                        });
                     }
                 }
             );
@@ -2782,7 +1769,7 @@ const makeSendAfterHoursAutoReply = ({ database, baseUrl, redirectTo, requireRed
                 GMAIL_SERVICE_ACCOUNT_KEY.value()
             );
 
-            const senderEmail = getSenderMailbox(ticket);
+            const senderEmail = await getSenderMailbox(ticket);
 
             const bodyText = replacePlaceholders(
                 settings.body || "",
@@ -2913,7 +1900,7 @@ const makeSendEmailOnAgentReply = ({ database, baseUrl, redirectTo, requireRedir
             }
 
             const senderMailbox =
-                getSenderMailbox(after);
+                await getSenderMailbox(after);
 
             const key = JSON.parse(
                 GMAIL_SERVICE_ACCOUNT_KEY.value()
@@ -3049,7 +2036,7 @@ const makeSendEmailOnAssignment = ({ database, baseUrl, redirectTo, requireRedir
             );
 
             const senderEmail =
-                getSenderMailbox(after);
+                await getSenderMailbox(after);
 
             const content =
                 "A ticket has been assigned to you for review.\n\n" +
@@ -3140,7 +2127,7 @@ const makeSendEmailOnNewTicketAssignment = ({ database, baseUrl, redirectTo, req
             );
 
             const senderEmail =
-                getSenderMailbox(ticket);
+                await getSenderMailbox(ticket);
 
             const content =
                 "A new ticket was created and assigned to you.\n\n" +
@@ -3333,7 +2320,7 @@ const makeSendEmailToParentOnTransfer = ({ database, baseUrl, redirectTo, requir
             );
 
             const senderEmail =
-                getSenderMailbox(after);
+                await getSenderMailbox(after);
 
             const parentEmail =
                 after.parentEmail ||
@@ -3479,6 +2466,93 @@ export const mirrorTicketSummary = onDocumentWritten(
         const result = await mirrorTicketSummaryDoc(admin.firestore(), ticketId);
         if (result === "deleted") {
             console.log(`[mirrorTicketSummary] removed summary for deleted ticket ${ticketId}`);
+        }
+    }
+);
+
+/**
+ * Settings > Email Configurations > "Test connection".
+ * Admin only. Impersonates the mailbox with the Gmail service account exactly
+ * like syncEmails does, so a failure here is the same failure the sync would hit.
+ */
+export const testMailboxConnection = onCall(
+    {
+        secrets: [GMAIL_SERVICE_ACCOUNT_KEY],
+        memory: "256MiB",
+        timeoutSeconds: 60,
+    },
+    async (request) => {
+        const uid = request.auth?.uid;
+        if (!uid) {
+            throw new HttpsError("unauthenticated", "Sign in required.");
+        }
+        const db = admin.firestore();
+        let actor = (await db.collection("users").doc(uid).get()).data();
+        if (!actor) {
+            const byAuth = await db.collection("users").where("authId", "==", uid).limit(1).get();
+            actor = byAuth.docs[0]?.data();
+        }
+        if (actor?.role !== "Admin") {
+            throw new HttpsError("permission-denied", "Only administrators can test mailboxes.");
+        }
+
+        const email = String(request.data?.email || "").trim().toLowerCase();
+        const mailboxId = String(request.data?.mailboxId || "").trim();
+        if (!email || !email.includes("@")) {
+            throw new HttpsError("invalid-argument", "A mailbox email address is required.");
+        }
+
+        const keyString = GMAIL_SERVICE_ACCOUNT_KEY.value();
+        if (!keyString) {
+            throw new HttpsError("failed-precondition", "GMAIL_SERVICE_ACCOUNT_KEY secret is missing.");
+        }
+        const key = JSON.parse(keyString);
+        const startedAt = Date.now();
+        const mailboxRef = mailboxId ? db.collection(MAILBOXES_COLLECTION).doc(mailboxId) : null;
+
+        try {
+            const gmail = await createGmailClient(key, email, [
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/gmail.modify",
+                "https://www.googleapis.com/auth/gmail.send",
+            ]);
+            const profile = await gmail.users.getProfile({ userId: "me" });
+            const inbox = await gmail.users.messages.list({
+                userId: "me",
+                q: "in:inbox newer_than:7d",
+                maxResults: 1,
+            });
+            if (mailboxRef) {
+                await mailboxRef.set(
+                    {
+                        lastTestAt: admin.firestore.FieldValue.serverTimestamp(),
+                        lastTestStatus: "ok",
+                        lastTestError: null,
+                    },
+                    { merge: true }
+                );
+            }
+            return {
+                ok: true,
+                emailAddress: profile.data.emailAddress || email,
+                messagesTotal: profile.data.messagesTotal ?? null,
+                inboxLast7Days: inbox.data.resultSizeEstimate ?? 0,
+                durationMs: Date.now() - startedAt,
+            };
+        } catch (error: any) {
+            const message = String(error?.message || error);
+            console.warn(`MAILBOX TEST FAILED: ${email}: ${message}`);
+            if (mailboxRef) {
+                await mailboxRef.set(
+                    {
+                        lastTestAt: admin.firestore.FieldValue.serverTimestamp(),
+                        lastTestStatus: "failed",
+                        lastTestError: message.slice(0, 500),
+                    },
+                    { merge: true }
+                );
+            }
+            return { ok: false, error: message, durationMs: Date.now() - startedAt };
         }
     }
 );

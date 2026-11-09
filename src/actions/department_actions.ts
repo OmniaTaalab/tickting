@@ -11,6 +11,7 @@ import type { WorkingHours } from '@/lib/types';
 const DepartmentSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(2, 'Category name must be at least 2 characters.'),
+  campusIds: z.array(z.string()).default([]),
   actorId: z.string().min(1),
   actorName: z.string().min(1),
 });
@@ -19,6 +20,7 @@ export type DepartmentActionState = {
   errors?: {
     form?: string[];
     name?: string[];
+    campusIds?: string[];
   };
   message?: string | null;
   success?: boolean;
@@ -35,6 +37,7 @@ export async function createOrUpdateDepartmentAction(
   const validatedFields = DepartmentSchema.safeParse({
     id: formData.get('id') || undefined,
     name: formData.get('name'),
+    campusIds: formData.getAll('campusIds').map(String).filter(Boolean),
     actorId: formData.get('actorId'),
     actorName: formData.get('actorName'),
   });
@@ -47,28 +50,28 @@ export async function createOrUpdateDepartmentAction(
     };
   }
 
-  const { id, name, actorId, actorName } = validatedFields.data;
+  const { id, name, campusIds, actorId, actorName } = validatedFields.data;
 
   try {
     const actor = { userId: actorId, name: actorName };
     if (id) {
       // Update
       const deptRef = adminDb.collection('departments').doc(id);
-      await deptRef.update({ name });
+      await deptRef.update({ name, campusIds });
        await logSystemEvent({
         eventType: 'CATEGORY_UPDATED',
         actor,
         message: `${actorName} updated category "${name}".`,
-        details: { departmentId: id, newName: name },
+        details: { departmentId: id, newName: name, campusIds },
       });
     } else {
       // Create
-      const docRef = await adminDb.collection('departments').add({ name });
+      const docRef = await adminDb.collection('departments').add({ name, campusIds });
       await logSystemEvent({
         eventType: 'CATEGORY_CREATED',
         actor,
         message: `${actorName} created category "${name}".`,
-        details: { departmentId: docRef.id, name: name },
+        details: { departmentId: docRef.id, name: name, campusIds },
       });
     }
     revalidatePath('/settings');

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { adminAuth, adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { logSystemEvent } from '@/lib/system-log';
+import { readScopeFromFormData, resolveScopeFields, stripDeletes } from '@/lib/scope-server';
 import { revalidatePath } from 'next/cache';
 
 const CreateAuthUserSchema = z.object({
@@ -16,11 +17,14 @@ const CreateAuthUserSchema = z.object({
   campusIds: z.array(z.string()).optional(),
   schoolIds: z.array(z.string()).optional(),
   gradeIds: z.array(z.string()).optional(),
+  scopeMode: z.enum(['structure', 'mailbox']).optional(),
+  mailboxIds: z.array(z.string()).optional(),
   userId: z.string().optional(),
   actorId: z.string().optional(),
   actorName: z.string().optional(),
 }).superRefine((data, ctx) => {
-  if ((data.role === 'Employee' || data.role === 'Manager') && (!data.departmentId || data.departmentId === 'none' || data.departmentId === '')) {
+  const byMailbox = (data as any).scopeMode === 'mailbox';
+  if (!byMailbox && (data.role === 'Employee' || data.role === 'Manager') && (!data.departmentId || data.departmentId === 'none' || data.departmentId === '')) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Category is required for Employees and Managers",
@@ -82,6 +86,8 @@ FIREBASE_PRIVATE_KEY`
       campusIds: formData.getAll('campusIds'),
       schoolIds: formData.getAll('schoolIds'),
       gradeIds: formData.getAll('gradeIds'),
+      scopeMode: formData.get('scopeMode') || undefined,
+      mailboxIds: formData.getAll('mailboxIds'),
       userId: userId || undefined,
       actorId: formData.get('actorId') || undefined,
       actorName: formData.get('actorName') || undefined,
@@ -95,7 +101,12 @@ FIREBASE_PRIVATE_KEY`
       };
     }
 
-    const { email, password, role, departmentId, divisionIds, campusIds, schoolIds, gradeIds } = validatedFields.data;
+    const { email, password, role } = validatedFields.data;
+    // Scope (campus structure or configured mailboxes) -> user document fields.
+    const scope = await resolveScopeFields(db, readScopeFromFormData(formData, role));
+    if (scope.error) {
+      return { errors: { form: [scope.error] }, message: scope.error, success: false };
+    }
     const actorId = validatedFields.data.actorId || 'system';
     const actorName = validatedFields.data.actorName || 'Admin';
     let name: string;
@@ -174,21 +185,7 @@ FIREBASE_PRIVATE_KEY`
               updatedAt: FieldValue.serverTimestamp(),
           };
 
-          if (departmentId && (role === 'Employee' || role === 'Manager')) {
-              newUserProfile.departmentId = departmentId;
-          }
-          if (divisionIds && divisionIds.length > 0 && (role === 'Employee' || role === 'Manager')) {
-              newUserProfile.divisionIds = divisionIds;
-          }
-          if (campusIds && campusIds.length > 0 && (role === 'Employee' || role === 'Manager')) {
-              newUserProfile.campusIds = campusIds;
-          }
-          if (schoolIds && schoolIds.length > 0 && (role === 'Employee' || role === 'Manager')) {
-              newUserProfile.schoolIds = schoolIds;
-          }
-          if (gradeIds && gradeIds.length > 0 && (role === 'Employee' || role === 'Manager')) {
-              newUserProfile.gradeIds = gradeIds;
-          }
+          Object.assign(newUserProfile, stripDeletes(scope.fields));
 
           await userDocRef.set(newUserProfile);
       }

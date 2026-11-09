@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { adminDb } from '@/lib/firebaseAdmin';
 import { revalidatePath } from 'next/cache';
 import { logSystemEvent } from '@/lib/system-log';
+import { normalizeSchoolConfig } from '@/lib/org-structure';
+import type { CampusSchoolConfig } from '@/lib/types';
 
 const CampusSchema = z.object({
   id: z.string().optional(),
@@ -50,7 +52,18 @@ export async function createOrUpdateCampusAction(
   const { id, name, schoolConfigsJson, actorId, actorName } = validatedFields.data;
 
   try {
-    const schoolConfigs = JSON.parse(schoolConfigsJson);
+    const rawConfigs = JSON.parse(schoolConfigsJson);
+    if (!Array.isArray(rawConfigs)) {
+      return { errors: { schoolConfigsJson: ['Invalid school configuration.'] }, success: false };
+    }
+    // Campus tree: school -> divisions -> grades. gradeIds stays the union for older readers.
+    const schoolConfigs = (rawConfigs as CampusSchoolConfig[])
+      .filter((c) => c && typeof c.schoolId === 'string' && c.schoolId)
+      .map(normalizeSchoolConfig);
+    const duplicateSchool = schoolConfigs.map((c) => c.schoolId).find((id, i, arr) => arr.indexOf(id) !== i);
+    if (duplicateSchool) {
+      return { errors: { schoolConfigsJson: ['Each school can only be added once per campus.'] }, success: false };
+    }
     const actor = { userId: actorId, name: actorName };
     const payload = { 
         name, 

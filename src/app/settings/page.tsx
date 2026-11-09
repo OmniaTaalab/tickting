@@ -27,7 +27,8 @@ import { DepartmentWorkingHours } from "./_components/working-hours";
 import { AfterHoursEmailSettingsPanel } from "./_components/after-hours-email-settings";
 import { OfficialHolidaysSettings } from "./_components/official-holidays";
 import { ActionLogTab } from "./_components/action-log-tab";
-import { Building2, Users2, LayoutGrid, ShieldCheck, Clock8, Tags, Clock, Mail, ScrollText, CalendarOff } from "lucide-react";
+import { MailboxList } from "./_components/mailbox-list";
+import { Users2, LayoutGrid, ShieldCheck, Clock8, Tags, Clock, Mail, ScrollText, CalendarOff, Inbox } from "lucide-react";
 
 export default function SettingsPage() {
     const { user: currentUser, isUserLoading } = useUser();
@@ -130,6 +131,15 @@ export default function SettingsPage() {
                 <Mail className="h-4 w-4" />
                 {t('afterHoursEmail')}
             </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger 
+                  value="email-config" 
+                  className="data-[state=active]:bg-[#1e3a8a] data-[state=active]:text-white data-[state=active]:shadow-sm px-6 gap-2 transition-all font-bold text-xs uppercase tracking-tight"
+              >
+                  <Inbox className="h-4 w-4" />
+                  {t('emailConfigurations')}
+              </TabsTrigger>
+            )}
             {isAdmin && (
               <TabsTrigger 
                   value="official-holidays" 
@@ -247,6 +257,13 @@ export default function SettingsPage() {
         <TabsContent value="after-hours-email" className="animate-in fade-in-50 duration-500">
             <AfterHoursEmailSettingsPanel />
         </TabsContent>
+
+        {/* EMAIL CONFIGURATIONS TAB - ADMIN ONLY */}
+        {isAdmin && (
+          <TabsContent value="email-config" className="animate-in fade-in-50 duration-500">
+              <MailboxList />
+          </TabsContent>
+        )}
 
         {/* OFFICIAL HOLIDAYS TAB - ADMIN ONLY */}
         {isAdmin && (

@@ -5,6 +5,7 @@ import { adminDb, adminAuth } from '@/lib/firebaseAdmin';
 import { revalidatePath } from 'next/cache';
 import { logSystemEvent } from '@/lib/system-log';
 import { FieldValue } from 'firebase-admin/firestore';
+import { readScopeFromFormData, resolveScopeFields } from '@/lib/scope-server';
 
 
 const UpdateUserSchema = z.object({
@@ -16,11 +17,13 @@ const UpdateUserSchema = z.object({
   campusIds: z.array(z.string()).optional(),
   schoolIds: z.array(z.string()).optional(),
   gradeIds: z.array(z.string()).optional(),
+  scopeMode: z.enum(['structure', 'mailbox']).optional(),
+  mailboxIds: z.array(z.string()).optional(),
   password: z.string().min(6, "Password must be at least 6 characters").optional().or(z.literal('')),
   actorId: z.string().min(1),
   actorName: z.string().min(1),
 }).superRefine((data, ctx) => {
-    if ((data.role === 'Employee' || data.role === 'Manager') && (!data.departmentId || data.departmentId === 'none' || data.departmentId === '')) {
+    if (data.scopeMode !== 'mailbox' && (data.role === 'Employee' || data.role === 'Manager') && (!data.departmentId || data.departmentId === 'none' || data.departmentId === '')) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: "Department is required for Employees and Managers",
@@ -66,6 +69,8 @@ export async function updateUserAction(
     campusIds: formData.getAll('campusIds'),
     schoolIds: formData.getAll('schoolIds'),
     gradeIds: formData.getAll('gradeIds'),
+    scopeMode: formData.get('scopeMode') || undefined,
+    mailboxIds: formData.getAll('mailboxIds'),
     password: formData.get('password'),
     actorId: formData.get('actorId'),
     actorName: formData.get('actorName'),
@@ -81,6 +86,7 @@ export async function updateUserAction(
   }
 
   const { userId, name, role, departmentId, divisionIds, campusIds, schoolIds, gradeIds, password, actorId, actorName } = validatedFields.data;
+  void divisionIds; void campusIds; void schoolIds; void gradeIds; void departmentId;
 
   try {
     const actorRef = adminDb.collection('users').doc(actorId);
@@ -132,26 +138,14 @@ export async function updateUserAction(
         delete updates.role; // Prevent role change if not admin
     }
 
-    if (role === 'Admin') {
-        updates.departmentId = FieldValue.delete();
-        updates.divisionIds = FieldValue.delete();
-        updates.campusIds = FieldValue.delete();
-        updates.schoolIds = FieldValue.delete();
-        updates.schoolId = FieldValue.delete();
-        updates.gradeIds = FieldValue.delete();
-    } else {
-        if (departmentId && departmentId !== 'none') {
-            updates.departmentId = departmentId;
-        } else {
-            updates.departmentId = FieldValue.delete();
-        }
-
-        updates.divisionIds = divisionIds || [];
-        updates.campusIds = campusIds || [];
-        updates.schoolIds = schoolIds || [];
-        updates.schoolId = (schoolIds && schoolIds.length > 0) ? schoolIds[0] : FieldValue.delete();
-        updates.gradeIds = gradeIds || [];
+    // Scope (campus structure or configured mailboxes) -> user document fields.
+    // Admins get every scope field removed; staff get the derived/selected ids.
+    const effectiveRole = (updates.role as string) || targetData.role;
+    const scope = await resolveScopeFields(adminDb, readScopeFromFormData(formData, effectiveRole));
+    if (scope.error) {
+        return { errors: { form: [scope.error] }, message: scope.error, success: false };
     }
+    Object.assign(updates, scope.fields);
     
     // 1. Update Firestore
     await targetUserRef.update(updates);
@@ -177,7 +171,7 @@ export async function updateUserAction(
       message: `${actorName} updated the profile ${password ? 'and password ' : ''}for user ${name}.`,
       details: {
         targetUserId: userId,
-        updatedFields: { name, role, departmentId, divisionIds, campusIds, schoolIds, gradeIds, passwordUpdated: !!password }
+        updatedFields: { name, role, scope: Object.fromEntries(Object.entries(scope.fields).filter(([, v]) => !(v instanceof FieldValue))), passwordUpdated: !!password }
       }
     });
 

@@ -145,6 +145,18 @@ export default function NewTicketPage() {
 
   const selectedCampusId = form.watch('campusId');
   const selectedSchoolId = form.watch('schoolId');
+  const selectedDivisionId = form.watch('divisionId');
+
+  // Divisions configured under the selected school on the selected campus.
+  // Falls back to every division when the campus has no division layer yet.
+  const availableDivisions = useMemo(() => {
+    if (!selectedCampusId || !selectedSchoolId || !campuses || !divisions) return divisions || [];
+    const campus = campuses.find(c => c.id === selectedCampusId);
+    const schoolConfig = campus?.schoolConfigs?.find(config => config.schoolId === selectedSchoolId);
+    const configured = (schoolConfig?.divisions || []).map(d => d.divisionId);
+    if (!configured.length) return divisions;
+    return divisions.filter(d => configured.includes(d.id));
+  }, [selectedCampusId, selectedSchoolId, campuses, divisions]);
 
   // Filter available schools based on selected campus
   const availableSchools = useMemo(() => {
@@ -163,10 +175,16 @@ export default function NewTicketPage() {
     if (!campus || !campus.schoolConfigs || campus.schoolConfigs.length === 0) return allGrades;
 
     const schoolConfig = campus.schoolConfigs.find(config => config.schoolId === selectedSchoolId);
-    if (!schoolConfig || !schoolConfig.gradeIds || schoolConfig.gradeIds.length === 0) return allGrades;
-    
-    return allGrades.filter(g => schoolConfig.gradeIds.includes(g.id));
-  }, [selectedCampusId, selectedSchoolId, campuses, allGrades]);
+    if (!schoolConfig) return allGrades;
+    // With a division chosen, only that division's grades; otherwise every grade of the school
+    // (division grades + grades listed directly on the school).
+    const divisionConfig = selectedDivisionId ? schoolConfig.divisions?.find(d => d.divisionId === selectedDivisionId) : undefined;
+    const allowed = divisionConfig?.gradeIds?.length
+      ? divisionConfig.gradeIds
+      : Array.from(new Set([...(schoolConfig.gradeIds || []), ...(schoolConfig.divisions || []).flatMap(d => d.gradeIds || [])]));
+    if (!allowed.length) return allGrades;
+    return allGrades.filter(g => allowed.includes(g.id));
+  }, [selectedCampusId, selectedSchoolId, selectedDivisionId, campuses, allGrades]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -456,7 +474,7 @@ export default function NewTicketPage() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {divisions?.map((division) => (
+                          {availableDivisions?.map((division) => (
                             <SelectItem key={division.id} value={division.id}>{division.name}</SelectItem>
                           ))}
                         </SelectContent>

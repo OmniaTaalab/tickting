@@ -18,6 +18,8 @@ export type AfterHoursEmailSettings = {
 export type Department = {
   id: string;
   name: string;
+  /** Campuses this category operates on. Empty or missing = every campus. */
+  campusIds?: string[];
   responsibleUserId?: string;
   lastAssignedUserIndex?: number;
   workingHours?: WorkingHours;
@@ -35,9 +37,18 @@ export type Grade = {
   name: string;
 };
 
+/** One division inside a school on a campus, with the grades that belong to it. */
+export type CampusDivisionConfig = {
+  divisionId: string;
+  gradeIds: string[];
+};
+
 export type CampusSchoolConfig = {
   schoolId: string;
+  /** Union of every division's grades. Kept in sync by the campus action for older readers. */
   gradeIds: string[];
+  /** Grade -> division mapping for this school on this campus. */
+  divisions?: CampusDivisionConfig[];
 };
 
 export type Campus = {
@@ -105,6 +116,12 @@ export type UserProfile = {
   schoolIds?: string[];
   gradeIds?: string[];
   campusIds?: string[]; // Changed from schoolIds to campusIds
+  /** How the scope was chosen in the UI: by campus structure or by configured mailboxes. */
+  scopeMode?: 'structure' | 'mailbox';
+  /** Configured mailboxes (mailboxes/{id}) this staff member serves. */
+  mailboxIds?: string[];
+  /** Lower-cased mailbox addresses; when present, email tickets are restricted to these. */
+  mailboxEmails?: string[];
   status?: UserStatus;
   currentSessionStartedAt?: Timestamp | string;
   lastStatusChangedAt?: Timestamp | string;
@@ -342,3 +359,43 @@ export const DEFAULT_HOLIDAY_EMAIL = {
   body: "Thank you for contacting us.\n\nPlease note that today is an official holiday and our support team is currently unavailable.\n\nYour ticket has been received and will be reviewed on the next working day.\n\nRegards,\nSupport Team"
 };
 
+
+
+// ---------------------------------------------------------------------------
+// Email (mailbox) configuration: Settings > Email Configurations
+// ---------------------------------------------------------------------------
+
+/**
+ * department: queue with no campus (Info, Operations) — any staff in the category.
+ * campus:     one campus, no academic routing (Admissions, Collection).
+ * academic:   one campus + schools + divisions; grades come from the campus tree.
+ */
+export type MailboxScope = 'department' | 'campus' | 'academic';
+
+export type MailboxSyncStatus = 'ok' | 'failed' | 'never';
+
+export type MailboxConfig = {
+  id: string;
+  email: string;            // lower-cased, unique
+  displayName?: string;     // "From" name on replies
+  departmentId: string;
+  departmentName: string;
+  scope: MailboxScope;
+  campusId?: string | null;
+  campusName?: string | null;
+  schoolIds: string[];
+  divisionIds: string[];
+  /** Director-style queue: only these staff (lower-cased emails) receive tickets. */
+  assignTo: string[];
+  enabled: boolean;
+  notes?: string;
+  lastSyncAt?: Timestamp | string | null;
+  lastSyncStatus?: MailboxSyncStatus;
+  lastSyncError?: string | null;
+  lastSyncMessageCount?: number | null;
+  lastTestAt?: Timestamp | string | null;
+  lastTestStatus?: 'ok' | 'failed' | null;
+  lastTestError?: string | null;
+  createdAt?: Timestamp | string;
+  updatedAt?: Timestamp | string;
+};

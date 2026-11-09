@@ -66,6 +66,9 @@ type ScopeTicket = {
   mailboxEmail?: string | null;
 };
 type ScopeAgent = {
+  email?: string;
+  /** Lower-cased mailbox addresses; when present the agent only serves those mailboxes. */
+  mailboxEmails?: string[];
   campusIds?: string[];
   campusId?: string;
   schoolIds?: string[];
@@ -81,7 +84,14 @@ type ScopeAgent = {
   grades?: string[];
   gradeName?: string;
 };
-type Taxonomy = { schools: Map<string, string[]>; divisions: Map<string, string[]>; grades: Map<string, string[]> };
+type MailboxRule = { scope: string; assignTo: string[] };
+type Taxonomy = {
+  schools: Map<string, string[]>;
+  divisions: Map<string, string[]>;
+  grades: Map<string, string[]>;
+  /** Settings > Email Configurations, keyed by lower-cased address. */
+  mailboxes: Map<string, MailboxRule>;
+};
 
 const normalizeScope = (v: unknown): string => String(v ?? '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
@@ -112,10 +122,21 @@ async function loadTaxonomy(db: FirebaseFirestore.Firestore): Promise<Taxonomy> 
     }
     return map;
   };
-  const [schools, divisions, grades] = await Promise.all([
-    build('schools'), build('divisions'), build('grades')
+  const [schools, divisions, grades, mailboxSnap] = await Promise.all([
+    build('schools'), build('divisions'), build('grades'), db.collection('mailboxes').get()
   ]);
-  return { schools, divisions, grades };
+  const mailboxes = new Map<string, MailboxRule>();
+  for (const doc of mailboxSnap.docs) {
+    const data = doc.data() as { email?: string; scope?: string; assignTo?: string[] };
+    const email = normalizeScope(data.email).replace(/ /g, '');
+    if (!data.email) continue;
+    mailboxes.set(String(data.email).trim().toLowerCase(), {
+      scope: data.scope || 'department',
+      assignTo: Array.isArray(data.assignTo) ? data.assignTo.map(e => String(e).trim().toLowerCase()) : [],
+    });
+    void email;
+  }
+  return { schools, divisions, grades, mailboxes };
 }
 
 /**
@@ -123,12 +144,30 @@ async function loadTaxonomy(db: FirebaseFirestore.Firestore): Promise<Taxonomy> 
  * Missing or contradictory ticket attributes must NEVER widen access.
  */
 function agentCoversTicket(agent: ScopeAgent, ticket: ScopeTicket, taxonomy: Taxonomy): boolean {
+  const ticketMailbox = String(ticket.mailboxEmail || '').trim().toLowerCase();
+  const mailboxRule = ticketMailbox ? taxonomy.mailboxes.get(ticketMailbox) : undefined;
+
+  // Staff attached to specific mailboxes (Settings > Employees > "by mailbox") only
+  // receive tickets from those mailboxes. Tickets without a mailbox (forms, phone,
+  // walk-in) still follow the normal scope rules.
+  const agentMailboxes = textValues(agent.mailboxEmails).map(e => e.toLowerCase());
+  if (agentMailboxes.length && ticketMailbox && !agentMailboxes.includes(ticketMailbox)) return false;
+
   // General Support and Operations have no campus or academic routing restrictions.
   // Their department is checked by the caller's Firestore query / scope guard.
   if (ticket.departmentId && DEPARTMENT_ONLY_IDS.has(ticket.departmentId)) return true;
+  if (mailboxRule?.scope === 'department') return true;
 
   const agentCampuses = textValues(agent.campusIds, agent.campusId);
   if (!ticket.campusId || !agentCampuses.includes(ticket.campusId)) return false;
+
+  // Director-style mailbox: only the listed staff, campus already checked above.
+  if (mailboxRule?.assignTo.length) {
+    const agentEmail = String(agent.email || '').trim().toLowerCase();
+    return Boolean(agentEmail) && mailboxRule.assignTo.includes(agentEmail);
+  }
+  // Campus-only mailbox (Admissions / Collection): no school, division or grade needed.
+  if (mailboxRule?.scope === 'campus') return true;
 
   const matches = (
     ids: unknown, names: unknown, targetId: unknown, targetName: unknown,
@@ -351,6 +390,7 @@ export async function getRoundRobinAssignee(
                         gradeNames: (data as any).gradeNames,
                         grades: (data as any).grades,
                         gradeName: (data as any).gradeName,
+                        mailboxEmails: (data as any).mailboxEmails || [],
                         activeSessionId: data.activeSessionId,
                     };
                 })
@@ -529,6 +569,7 @@ export async function autoAssignQueuedTickets(options?: {
             gradeNames: (data as any).gradeNames,
             grades: (data as any).grades,
             gradeName: (data as any).gradeName,
+            mailboxEmails: (data as any).mailboxEmails || [],
             activeSessionId: data.activeSessionId,
           };
         })
