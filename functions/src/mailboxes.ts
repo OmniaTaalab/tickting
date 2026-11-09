@@ -165,16 +165,26 @@ export async function loadMailboxConfigs(
     return configs.sort((a, b) => a.email.localeCompare(b.email));
 }
 
-let cache: { at: number; configs: MailboxConfig[] } | null = null;
+const cache = new Map<string, { at: number; configs: MailboxConfig[] }>();
 
-/** Cached loader for the email triggers (they run far more often than the config changes). */
+/** Database id of a Firestore instance ("(default)" for production, "staging" for test). */
+export function databaseIdOf(db: FirebaseFirestore.Firestore): string {
+    return String((db as unknown as { databaseId?: string }).databaseId || "(default)");
+}
+
+/**
+ * Cached loader for the email triggers (they run far more often than the config changes).
+ * Cached per database so the staging functions never see production mailboxes.
+ */
 export async function getCachedMailboxConfigs(
     db: FirebaseFirestore.Firestore,
     maxAgeMs = 60_000
 ): Promise<MailboxConfig[]> {
-    if (cache && Date.now() - cache.at < maxAgeMs) return cache.configs;
+    const key = databaseIdOf(db);
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < maxAgeMs) return hit.configs;
     const configs = await loadMailboxConfigs(db);
-    cache = { at: Date.now(), configs };
+    cache.set(key, { at: Date.now(), configs });
     return configs;
 }
 

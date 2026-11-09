@@ -17,7 +17,9 @@ export type MailboxTestResult =
  */
 export async function testMailboxConnection(input: { email: string; mailboxId?: string }): Promise<MailboxTestResult> {
   const fns = getFunctions(getApp(), FUNCTIONS_REGION);
-  const callable = httpsCallable<{ email: string; mailboxId?: string }, MailboxTestResult>(fns, 'testMailboxConnection');
-  const res = await callable(input);
+  const callable = httpsCallable<{ email: string; mailboxId?: string; database: string }, MailboxTestResult>(fns, 'testMailboxConnection');
+  // Same database the web app reads/writes (NEXT_PUBLIC_FIRESTORE_DATABASE_ID = "staging" on the test backend).
+  const database = process.env.NEXT_PUBLIC_FIRESTORE_DATABASE_ID || '(default)';
+  const res = await callable({ ...input, database });
   return res.data;
 }

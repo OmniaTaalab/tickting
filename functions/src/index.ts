@@ -233,13 +233,16 @@ async function sendHtmlEmail(args: {
 /** Resolve sender for form-created tickets using the same mailbox definitions
  * used by the Gmail synchronization process. Fail closed on missing/ambiguous
  * routes instead of sending as the wrong department or campus. */
-async function getSenderMailbox(ticket: any): Promise<string> {
+async function getSenderMailbox(
+    ticket: any,
+    db: admin.firestore.Firestore = admin.firestore()
+): Promise<string> {
     // Tickets received by email must reply from their original inbox.
     if (ticket?.originalRecipientEmail) return ticket.originalRecipientEmail;
 
     const department = normalizeRoutingText(ticket?.departmentName || ticket?.categoryName || "");
     const campusId = String(ticket?.campusId || "");
-    const candidates = (await getCachedMailboxConfigs(admin.firestore())).filter((mailbox) =>
+    const candidates = (await getCachedMailboxConfigs(db)).filter((mailbox) =>
         mailbox.enabled !== false &&
         normalizeRoutingText(mailbox.department) === department &&
         (!mailbox.campusId || mailbox.campusId === campusId)
@@ -1769,7 +1772,7 @@ const makeSendAfterHoursAutoReply = ({ database, baseUrl, redirectTo, requireRed
                 GMAIL_SERVICE_ACCOUNT_KEY.value()
             );
 
-            const senderEmail = await getSenderMailbox(ticket);
+            const senderEmail = await getSenderMailbox(ticket, getFirestore(admin.app(), database));
 
             const bodyText = replacePlaceholders(
                 settings.body || "",
@@ -1900,7 +1903,7 @@ const makeSendEmailOnAgentReply = ({ database, baseUrl, redirectTo, requireRedir
             }
 
             const senderMailbox =
-                await getSenderMailbox(after);
+                await getSenderMailbox(after, getFirestore(admin.app(), database));
 
             const key = JSON.parse(
                 GMAIL_SERVICE_ACCOUNT_KEY.value()
@@ -2036,7 +2039,7 @@ const makeSendEmailOnAssignment = ({ database, baseUrl, redirectTo, requireRedir
             );
 
             const senderEmail =
-                await getSenderMailbox(after);
+                await getSenderMailbox(after, getFirestore(admin.app(), database));
 
             const content =
                 "A ticket has been assigned to you for review.\n\n" +
@@ -2127,7 +2130,7 @@ const makeSendEmailOnNewTicketAssignment = ({ database, baseUrl, redirectTo, req
             );
 
             const senderEmail =
-                await getSenderMailbox(ticket);
+                await getSenderMailbox(ticket, getFirestore(admin.app(), database));
 
             const content =
                 "A new ticket was created and assigned to you.\n\n" +
@@ -2320,7 +2323,7 @@ const makeSendEmailToParentOnTransfer = ({ database, baseUrl, redirectTo, requir
             );
 
             const senderEmail =
-                await getSenderMailbox(after);
+                await getSenderMailbox(after, getFirestore(admin.app(), database));
 
             const parentEmail =
                 after.parentEmail ||
@@ -2475,6 +2478,8 @@ export const mirrorTicketSummary = onDocumentWritten(
  * Admin only. Impersonates the mailbox with the Gmail service account exactly
  * like syncEmails does, so a failure here is the same failure the sync would hit.
  */
+const ALLOWED_DATABASES = new Set(["(default)", "staging"]);
+
 export const testMailboxConnection = onCall(
     {
         secrets: [GMAIL_SERVICE_ACCOUNT_KEY],
@@ -2486,7 +2491,13 @@ export const testMailboxConnection = onCall(
         if (!uid) {
             throw new HttpsError("unauthenticated", "Sign in required.");
         }
-        const db = admin.firestore();
+        // The web app passes its Firestore database id so the test runs against the same
+        // environment (production "(default)" or test "staging"); anything else is rejected.
+        const requestedDb = String(request.data?.database || "(default)");
+        if (!ALLOWED_DATABASES.has(requestedDb)) {
+            throw new HttpsError("invalid-argument", `Unknown database "${requestedDb}".`);
+        }
+        const db = getFirestore(admin.app(), requestedDb);
         let actor = (await db.collection("users").doc(uid).get()).data();
         if (!actor) {
             const byAuth = await db.collection("users").where("authId", "==", uid).limit(1).get();

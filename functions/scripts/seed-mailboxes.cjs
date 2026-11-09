@@ -3,8 +3,14 @@
  * One-time seed: Settings > Email Configurations from the previous hard-coded list,
  * and the division layer of the campus structure, mapped onto the LIVE data.
  *
- *   node functions/scripts/seed-mailboxes.cjs            # dry run, prints the plan
- *   node functions/scripts/seed-mailboxes.cjs --apply    # writes to Firestore
+ *   node functions/scripts/seed-mailboxes.cjs --database staging            # dry run against the TEST database
+ *   node functions/scripts/seed-mailboxes.cjs --database staging --apply    # write to the TEST database
+ *   node functions/scripts/seed-mailboxes.cjs --production --apply          # write to the (default) PRODUCTION database
+ *   --create-missing-taxonomy   also create schools / divisions / grades the legacy routes
+ *                               name but the target database lacks (useful on the test database)
+ *
+ * The default target is the "staging" database. Writing to "(default)" requires the
+ * explicit --production flag so the live system is never touched by accident.
  *
  * Guarantees
  *   - No existing document is deleted and no existing id changes.
@@ -20,11 +26,25 @@ const fs = require("fs");
 const admin = require(path.join(__dirname, "..", "node_modules", "firebase-admin"));
 
 const APPLY = process.argv.includes("--apply");
+const PRODUCTION = process.argv.includes("--production");
+const CREATE_MISSING = process.argv.includes("--create-missing-taxonomy");
+const dbArgIndex = process.argv.indexOf("--database");
+const DATABASE_ID = PRODUCTION ? "(default)" : dbArgIndex !== -1 ? process.argv[dbArgIndex + 1] : "staging";
+if (!DATABASE_ID || DATABASE_ID.startsWith("--")) {
+    console.error("Usage: --database <id> | --production  [--apply]");
+    process.exit(1);
+}
+if (DATABASE_ID === "(default)" && !PRODUCTION) {
+    console.error('Refusing to target the "(default)" (production) database without --production.');
+    process.exit(1);
+}
 const PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT_ID || "studio-7708718228-149dc";
 const LEGACY = JSON.parse(fs.readFileSync(path.join(__dirname, "legacy-mailboxes.json"), "utf8"));
 
 admin.initializeApp({ credential: admin.credential.applicationDefault(), projectId: PROJECT_ID });
-const db = admin.firestore();
+const { getFirestore } = require(path.join(__dirname, "..", "node_modules", "firebase-admin", "lib", "firestore"));
+const db = getFirestore(admin.app(), DATABASE_ID);
+console.log(`Target: project ${PROJECT_ID}, Firestore database "${DATABASE_ID}"${PRODUCTION ? "  *** PRODUCTION ***" : ""}${APPLY ? "  (APPLY)" : "  (dry run)"}\n`);
 
 const norm = (v) =>
     String(v || "")
@@ -56,7 +76,39 @@ async function byName(collection) {
     return { map, names };
 }
 
+async function createMissingTaxonomy() {
+    // Names the legacy routes use, per collection.
+    const wanted = { schools: new Set(), divisions: new Set(), grades: new Set() };
+    for (const mb of LEGACY) {
+        for (const r of mb.routes || []) {
+            wanted.schools.add(String(r.school).trim());
+            wanted.divisions.add(String(r.division).trim());
+            r.grades.forEach((g) => wanted.grades.add(String(g).trim()));
+        }
+    }
+    const created = [];
+    const batch = db.batch();
+    for (const [collection, names] of Object.entries(wanted)) {
+        const existing = await byName(collection);
+        for (const name of names) {
+            if (existing.map.has(norm(name))) continue;
+            created.push(`${collection}: "${name}"`);
+            if (APPLY) {
+                const ref = db.collection(collection).doc();
+                batch.set(ref, collection === "divisions" ? { name, color: "#3B82F6" } : { name });
+            }
+        }
+    }
+    if (created.length) {
+        console.log(`${APPLY ? "Creating" : "Would create"} ${created.length} missing taxonomy record(s):`);
+        created.forEach((c) => console.log("  + " + c));
+        if (APPLY) await batch.commit();
+        console.log("");
+    }
+}
+
 (async () => {
+    if (CREATE_MISSING) await createMissingTaxonomy();
     const [departments, schools, divisions, grades, campusSnap, existingMailboxes] = await Promise.all([
         byName("departments"),
         byName("schools"),
@@ -255,6 +307,8 @@ async function byName(collection) {
     if (problems.size) {
         console.log(`\nProblems (${problems.size}):`);
         [...problems].forEach((p) => console.log("  - " + p));
+        if (CREATE_MISSING && !APPLY) console.log("  (school/division/grade records above are created first when run with --apply)");
+        else if (!CREATE_MISSING) console.log("  (add --create-missing-taxonomy to create missing schools/divisions/grades, or add them in Settings)");
     }
 
     if (!APPLY) {
@@ -267,7 +321,7 @@ async function byName(collection) {
     for (const c of campusWrites) batch.update(db.collection("campuses").doc(c.id), { schoolConfigs: c.schoolConfigs });
     for (const d of deptWrites) batch.update(db.collection("departments").doc(d.id), { campusIds: d.campusIds });
     await batch.commit();
-    console.log(`\nAPPLIED: ${mailboxWrites.length} mailboxes, ${campusWrites.length} campuses, ${deptWrites.length} categories.`);
+    console.log(`\nAPPLIED to database "${DATABASE_ID}": ${mailboxWrites.length} mailboxes, ${campusWrites.length} campuses, ${deptWrites.length} categories.`);
 })().catch((e) => {
     console.error("SEED FAILED:", e.message);
     process.exit(1);
