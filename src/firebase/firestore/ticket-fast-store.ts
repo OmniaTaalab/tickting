@@ -17,6 +17,7 @@ import {
   TIMESTAMP_MARKER,
   type TicketScope,
 } from '@/lib/ticket-scope';
+import { projectTicket, type TicketProjection } from '@/lib/ticket-projections';
 
 /**
  * Fast-load store for one ticket list scope.
@@ -78,7 +79,9 @@ class TicketFastStore {
   constructor(
     private firestore: Firestore,
     private auth: Auth,
-    private scope: TicketScope
+    private scope: TicketScope,
+    /** Optional field projection: the snapshot and live changes carry only these fields. */
+    private projection: TicketProjection | null
   ) {
     this.load().catch(err => {
       console.warn('[ticket-fast-store] fast load failed, falling back to listener:', err?.message || err);
@@ -154,7 +157,7 @@ class TicketFastStore {
       const res = await fetch('/api/ticket-summaries', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ scope: this.scope }),
+        body: JSON.stringify({ scope: this.scope, projection: this.projection }),
         cache: 'no-store',
         signal: ctrl.signal,
       });
@@ -211,6 +214,7 @@ class TicketFastStore {
             .docChanges()
             .filter(ch => ch.type !== 'removed') // leaving this change-query never means deletion
             .map(ch => ({ id: ch.doc.id, data: ch.doc.data() }));
+          const proj = this.projection;
           run(() => {
             let changed = false;
             for (const { id, data } of changes) {
@@ -219,7 +223,7 @@ class TicketFastStore {
               const prev = this.lastApplied.get(id);
               if (prev && tsLess(ts, prev)) continue;
               this.lastApplied.set(id, ts);
-              if (inTicketScope(this.scope, data)) changed = this.upsert(id, data) || changed;
+              if (inTicketScope(this.scope, data)) changed = this.upsert(id, proj ? (projectTicket(data, proj) as DocumentData) : data) || changed;
               else changed = this.remove(id) || changed;
             }
             if (changed) this.emit();
@@ -291,15 +295,21 @@ class TicketFastStore {
 const stores = new Map<string, TicketFastStore>();
 let storesOwner: string | null = null;
 
-export function getTicketFastStore(firestore: Firestore, auth: Auth, scope: TicketScope, uid: string) {
+export function getTicketFastStore(
+  firestore: Firestore,
+  auth: Auth,
+  scope: TicketScope,
+  uid: string,
+  projection: TicketProjection | null = null
+) {
   if (storesOwner !== uid) {
     clearTicketFastStores();
     storesOwner = uid;
   }
-  const key = scopeKey(scope);
+  const key = scopeKey(scope) + (projection ? `|${projection}` : '');
   let store = stores.get(key);
   if (!store) {
-    store = new TicketFastStore(firestore, auth, scope);
+    store = new TicketFastStore(firestore, auth, scope, projection);
     stores.set(key, store);
   }
   return store;

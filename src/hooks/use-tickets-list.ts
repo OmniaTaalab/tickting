@@ -17,6 +17,7 @@ import type { UseCollectionResult } from '@/firebase/firestore/use-collection';
 import { ACTIVE_STATUSES, scopeKey, type TicketScope } from '@/lib/ticket-scope';
 import { clearTicketKeepAlive, keepTicketQueryAlive } from '@/firebase/firestore/ticket-keepalive';
 import { getTicketFastStore, type FastStoreState } from '@/firebase/firestore/ticket-fast-store';
+import type { TicketProjection } from '@/lib/ticket-projections';
 
 /**
  * Live kill switch: settings/ticketSummaries { enabled: true }.
@@ -24,10 +25,19 @@ import { getTicketFastStore, type FastStoreState } from '@/firebase/firestore/ti
  * - Flipping it in the Firestore console switches every open browser immediately.
  * Returns undefined until the first answer arrives (pages show their skeleton meanwhile).
  */
-type TicketFlags = { enabled: boolean; fastLoad: boolean; fastLoadUids: string[] };
-const FLAGS_OFF: TicketFlags = { enabled: false, fastLoad: false, fastLoadUids: [] };
+export type TicketFlags = {
+  enabled: boolean;
+  fastLoad: boolean;
+  fastLoadUids: string[];
+  /** Server-paged tickets list (/api/tickets/view), everyone or an allowlist of uids. */
+  pagedTickets: boolean;
+  pagedTicketsUids: string[];
+};
+const FLAGS_OFF: TicketFlags = { enabled: false, fastLoad: false, fastLoadUids: [], pagedTickets: false, pagedTicketsUids: [] };
 const sameFlags = (a: TicketFlags, b: TicketFlags) =>
-  a.enabled === b.enabled && a.fastLoad === b.fastLoad && a.fastLoadUids.join('|') === b.fastLoadUids.join('|');
+  a.enabled === b.enabled && a.fastLoad === b.fastLoad && a.fastLoadUids.join('|') === b.fastLoadUids.join('|') &&
+  a.pagedTickets === b.pagedTickets && a.pagedTicketsUids.join('|') === b.pagedTicketsUids.join('|');
+const uidList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((u: unknown): u is string => typeof u === 'string') : []);
 let flagCache: TicketFlags | undefined;
 const flagSubscribers = new Set<(v: TicketFlags) => void>();
 let flagUnsubscribe: (() => void) | null = null;
@@ -41,11 +51,12 @@ function subscribeFlag(firestore: Firestore, cb: (v: TicketFlags) => void): () =
         const d = snap.exists() ? snap.data() : undefined;
         const enabled = d?.enabled === true;
         // fastLoad / fastLoadUids (staged rollout allowlist) only apply on top of enabled summaries.
-        const uids = Array.isArray(d?.fastLoadUids) ? d!.fastLoadUids.filter((u: unknown) => typeof u === 'string') : [];
         const next: TicketFlags = {
           enabled,
           fastLoad: enabled && d?.fastLoad === true,
-          fastLoadUids: enabled ? uids : [],
+          fastLoadUids: enabled ? uidList(d?.fastLoadUids) : [],
+          pagedTickets: enabled && d?.pagedTickets === true,
+          pagedTicketsUids: enabled ? uidList(d?.pagedTicketsUids) : [],
         };
         if (!flagCache || !sameFlags(flagCache, next)) {
           const prev = flagCache;
@@ -72,8 +83,8 @@ function subscribeFlag(firestore: Firestore, cb: (v: TicketFlags) => void): () =
 }
 
 /**
- * settings/ticketSummaries { enabled, fastLoad } — both live kill switches.
- * undefined until the first answer arrives.
+ * settings/ticketSummaries { enabled, fastLoad, fastLoadUids, pagedTickets, pagedTicketsUids }
+ * — all live kill switches. undefined until the first answer arrives.
  */
 export function useTicketFlags(): TicketFlags | undefined {
   const firestore = useFirestore();
@@ -123,7 +134,14 @@ const WAITING: UseCollectionResult<any> = { data: null, isLoading: true, error: 
  */
 export function useTicketsList<T = any>(
   scope: TicketScope | null,
-  opts: { keepAlive?: boolean } = {}
+  opts: {
+    keepAlive?: boolean;
+    /**
+     * Fast path only: receive just these fields per ticket (see ticket-projections.ts).
+     * The page must read no other fields. Ignored on the listener paths (full docs).
+     */
+    projection?: TicketProjection;
+  } = {}
 ): UseCollectionResult<T> {
   const firestore = useFirestore();
   const auth = useAuth();
@@ -132,15 +150,16 @@ export function useTicketsList<T = any>(
   const enabled = flags === undefined ? undefined : flags.enabled;
   const key = scope ? scopeKey(scope) : null;
   const wantKeepAlive = opts.keepAlive === true;
+  const projection = opts.projection ?? null;
   const uid = user?.uid ?? null;
 
   // Fast path (flags.fastLoad): one compressed snapshot + incremental live changes.
   const fastForMe = !!(flags?.enabled && uid && (flags.fastLoad || flags.fastLoadUids.includes(uid)));
   const fastStore = useMemo(
-    () => (key !== null && scope && uid && fastForMe ? getTicketFastStore(firestore, auth, scope, uid) : null),
+    () => (key !== null && scope && uid && fastForMe ? getTicketFastStore(firestore, auth, scope, uid, projection) : null),
     // scope is fully described by its key; flags object identity changes on any flag change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [firestore, auth, key, uid, fastForMe, flags]
+    [firestore, auth, key, uid, fastForMe, flags, projection]
   );
   const subscribeFast = useCallback(
     (fn: () => void) => (fastStore ? fastStore.subscribe(fn) : noopSubscribe()),

@@ -108,7 +108,9 @@ function DashboardPage() {
   const ticketScope = (firestore && user && userProfile)
     ? listScope(userProfile.role, user.uid, userProfile.departmentId)
     : null;
-  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<TicketType>(ticketScope, { keepAlive: true });
+  // 'dashboard' projection: only the fields this page and its charts read (see
+  // src/lib/ticket-projections.ts) — ~5x less data on the fast path, same results.
+  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<TicketType>(ticketScope, { keepAlive: true, projection: 'dashboard' });
 
   const roleFilteredTickets = useMemo(() => {
     if (!rawTickets || !userProfile || !user) return null;

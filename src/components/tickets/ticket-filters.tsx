@@ -21,6 +21,7 @@ import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { Input } from '../ui/input';
 import { useLanguage } from '@/hooks/use-language';
+import { useToast } from '@/hooks/use-toast';
 
 export type ColumnId = 'schoolSystem' | 'id' | 'details' | 'date' | 'assignedTo' | 'assignedAt' | 'priority' | 'status' | 'channel' | 'division' | 'campus' | 'slaStatus' | 'lastUpdated' | 'resolvedAt' | 'closedAt' | 'firstResponse' | 'tags';
 export type SLAFilterValue = 'all' | 'breached' | 'at-risk';
@@ -64,6 +65,12 @@ interface TicketFiltersProps {
   visibleColumns: Record<ColumnId, boolean>;
   onVisibleColumnsChange: React.Dispatch<React.SetStateAction<Record<ColumnId, boolean>>>;
   data: Ticket[];
+  /**
+   * Server-paged mode: `data` holds only the visible page, so the export fetches all
+   * filtered rows through this callback instead. `exportDisabled` mirrors "no rows".
+   */
+  onExportRows?: () => Promise<Ticket[]>;
+  exportDisabled?: boolean;
   statusCounts?: {
     all: number;
     Open: number;
@@ -125,6 +132,8 @@ export function TicketFilters({
   visibleColumns, 
   onVisibleColumnsChange,
   data,
+  onExportRows,
+  exportDisabled,
   statusCounts
 }: TicketFiltersProps) {
   const { t } = useLanguage();
@@ -150,6 +159,8 @@ export function TicketFilters({
   };
 
   const [localSearch, setLocalSearch] = useState(values.search);
+  const [isExporting, setIsExporting] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -164,10 +175,24 @@ export function TicketFilters({
     setLocalSearch(values.search);
   }, [values.search]);
 
-  const handleExport = () => {
-    if (!data || data.length === 0) return;
+  const handleExport = async () => {
+    let rows = data;
+    if (onExportRows) {
+      if (isExporting) return;
+      setIsExporting(true);
+      try {
+        rows = await onExportRows();
+      } catch (e) {
+        console.error('Export failed to load rows:', e);
+        toast({ variant: 'destructive', title: 'Export failed', description: 'Could not load the rows to export. Please try again.' });
+        return;
+      } finally {
+        setIsExporting(false);
+      }
+    }
+    if (!rows || rows.length === 0) return;
 
-    const exportData = data.map(t => {
+    const exportData = rows.map(t => {
       const created = toDate(t.createdAt);
       const assigned = toDate(t.assignedAt || (t.assignedTo ? t.createdAt : null));
       const updated = toDate(t.updatedAt);
@@ -445,7 +470,7 @@ assignedToIds: checked
             size="sm" 
             className="h-10 rounded-xl gap-2 font-bold text-xs uppercase tracking-tight border-slate-200 bg-white hover:bg-slate-50 shadow-sm" 
             onClick={handleExport} 
-            disabled={!data || data.length === 0}
+            disabled={onExportRows ? (exportDisabled === true || isExporting) : (!data || data.length === 0)}
           >
             <Download className="h-4 w-4 text-slate-500" />
             <span className="hidden md:inline">{t('export')}</span>

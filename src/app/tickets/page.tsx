@@ -27,8 +27,18 @@ import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 import { useToast } from '@/hooks/use-toast';
 import { autoAssignQueuedTickets } from '@/actions/ticket_assignment';
 import { fixDuplicateTicketNumbersAction } from '@/actions/ticket_deduplicate';
-import { useTicketsList } from '@/hooks/use-tickets-list';
+import { useTicketsList, useTicketFlags } from '@/hooks/use-tickets-list';
+import { useTicketsView } from '@/hooks/use-tickets-view';
 import { listScope } from '@/lib/ticket-scope';
+import {
+  applyTicketsFilters,
+  hasDuplicateTicketNumber,
+  roleFilterTickets,
+  sortTicketsForList,
+  ticketsStatusCounts,
+  EMPTY_STATUS_COUNTS,
+  type TicketsViewFilters,
+} from '@/lib/tickets-view';
 
 
 
@@ -363,17 +373,6 @@ function TicketsContent() {
   const { data: divisions } = useCollection<ScopeOption>(divisionsQuery);
   const { data: grades } = useCollection<ScopeOption>(gradesQuery);
 
-  const normalizeScope = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-  const matchesScope = (ticketValues: unknown[], selectedId: string, options: ScopeOption[] | null | undefined) => {
-    if (!selectedId) return true;
-    const selected = options?.find(option => option.id === selectedId);
-    const accepted = [selectedId, selected?.name].filter(Boolean).map(normalizeScope);
-    return ticketValues.some(value => {
-      if (Array.isArray(value)) return value.some(item => accepted.includes(normalizeScope(item)));
-      return accepted.includes(normalizeScope(value));
-    });
-  };
-
   // PERF: depend on profile *existence* only (the factory reads no profile fields),
   // so profile snapshots (e.g. status toggles) don't tear down the full-tickets listener.
   // PERF: subscribe to lightweight ticket_summaries scoped to a superset of what
@@ -381,21 +380,54 @@ function TicketsContent() {
   const ticketScope = (firestore && !isProfileLoading && user && userProfile)
     ? listScope(userProfile.role, user.uid, userProfile.departmentId)
     : null;
-  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<Ticket>(ticketScope, { keepAlive: true });
+
+  // Date bounds exactly as applyFilters computed them (browser-local day boundaries).
+  const dateBounds = useMemo(() => {
+    if (!filters.dateRange?.from) return null;
+    const validFrom = new Date(filters.dateRange.from);
+    if (isNaN(validFrom.getTime())) return null;
+    const start = startOfDay(validFrom);
+    const validTo = filters.dateRange.to ? new Date(filters.dateRange.to) : null;
+    const end = (validTo && !isNaN(validTo.getTime())) ? endOfDay(validTo) : endOfDay(validFrom);
+    return { startMs: start.getTime(), endMs: end.getTime() };
+  }, [filters.dateRange]);
+
+  const viewFilters = useMemo<TicketsViewFilters>(() => ({
+    search: filters.search,
+    departmentId: filters.departmentId,
+    campusId: filters.campusId,
+    schoolId: filters.schoolId,
+    divisionId: filters.divisionId,
+    gradeId: filters.gradeId,
+    channel: filters.channel,
+    dateStartMs: dateBounds?.startMs ?? null,
+    dateEndMs: dateBounds?.endMs ?? null,
+  }), [filters.search, filters.departmentId, filters.campusId, filters.schoolId, filters.divisionId, filters.gradeId, filters.channel, dateBounds]);
+
+  // PAGED MODE (settings/ticketSummaries.pagedTickets / pagedTicketsUids): the server computes
+  // this view with the same code (src/lib/tickets-view.ts) and returns only the current page.
+  // Not used while the SLA filter is active (it depends on the browser's time zone), and any
+  // failure falls back to the full-load path below for the rest of this page's lifetime.
+  const flags = useTicketFlags();
+  const pagedAllowed = !!(flags?.enabled && user && (flags.pagedTickets || flags.pagedTicketsUids.includes(user.uid)));
+  const view = useTicketsView<Ticket>({
+    enabled: pagedAllowed && filters.sla === 'all' && ticketScope !== null,
+    filters: viewFilters,
+    status: filters.status,
+    page: currentPage,
+    pageSize: ITEMS_PER_PAGE,
+    profileKey: userProfile ? `${userProfile.role}|${userProfile.departmentId}|${(userProfile.campusIds || []).join(',')}` : null,
+  });
+  const pagedMode = pagedAllowed && filters.sla === 'all' && !view.failed;
+
+  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<Ticket>(pagedMode ? null : ticketScope, { keepAlive: true });
 
   // Auto-heal duplicate ticket numbers if any exist
   const hasTriggeredDeduplicate = useRef(false);
+  const duplicateDetected = pagedMode ? (view.rows !== null && view.hasDuplicateTicketNumber) : hasDuplicateTicketNumber(rawTickets);
   useEffect(() => {
-    if (!rawTickets || rawTickets.length === 0 || hasTriggeredDeduplicate.current) return;
-    const seen = new Set<number>();
-    let hasDuplicate = false;
-    for (const t of rawTickets) {
-      if (t.ticketNumber && seen.has(t.ticketNumber)) {
-        hasDuplicate = true;
-        break;
-      }
-      if (t.ticketNumber) seen.add(t.ticketNumber);
-    }
+    if (hasTriggeredDeduplicate.current) return;
+    const hasDuplicate = duplicateDetected;
 
     if (hasDuplicate) {
       hasTriggeredDeduplicate.current = true;
@@ -407,36 +439,15 @@ function TicketsContent() {
         console.error('[Deduplicate] Auto-repair failed:', err);
       });
     }
-  }, [rawTickets]);
+  }, [duplicateDetected]);
 
-  const roleFilteredTickets = useMemo(() => {
-    if (!rawTickets || !userProfile || !user) return [];
+  const roleFilteredTickets = useMemo(
+    () => roleFilterTickets(rawTickets, userProfile, user?.uid),
+    [rawTickets, userProfile, user]
+  );
 
-    if (userProfile.role === 'Admin') return rawTickets;
-
-    const myUserId = user.uid;
-    const myDeptId = userProfile.departmentId;
-    const myCampuses = userProfile.campusIds || [];
-
-    return rawTickets.filter(t => {
-      const isAssignedToMe = t.assignedTo?.userId === myUserId;
-      const isSameDept = t.departmentId === myDeptId;
-      const isAllowedCampus = myCampuses.length === 0 || (t.campusId && myCampuses.includes(t.campusId));
-
-      if (userProfile.role === 'Manager') {
-        // STRICT: Must be department AND within assigned campuses
-        return isSameDept && isAllowedCampus;
-      }
-
-      if (userProfile.role === 'Employee') {
-        // Own tasks OR (Dept match if viewing department pool)
-        return isAssignedToMe || (isSameDept && isAllowedCampus);
-      }
-
-      return isSameDept && isAllowedCampus;
-    });
-
-  }, [rawTickets, userProfile, user]);
+  // main: assignee options for the Assigned-To filter. In paged mode the server computes the
+  // same list (ticketsAssigneeOptions in src/lib/tickets-view.ts) from the role-filtered set.
   const assignedToOptions = useMemo(() => {
     const employees = new Map<string, { id: string; name: string }>();
 
@@ -455,63 +466,13 @@ function TicketsContent() {
       a.name.localeCompare(b.name)
     );
   }, [roleFilteredTickets]);
+  const assigneeOptionsForFilter = pagedMode ? (view.assigneeOptions || []) : assignedToOptions;
+
+  // Role filter, search/department/scope/channel/date filters, status counts and sort now
+  // live in src/lib/tickets-view.ts (shared with the server). Only the SLA filter stays here.
   const applyFilters = (tickets: Ticket[]) => {
     if (!allDepartments) return tickets;
-    let result = [...tickets];
-
-    if (filters.search) {
-      const term = filters.search.toLowerCase().trim();
-      result = result.filter(t => {
-        const idStr = (t.ticketNumber || t.id.substring(0, 4)).toString();
-        const combined = `${idStr} ${t.subject} ${t.createdBy?.name || ''} ${t.assignedTo?.name || ''} ${t.departmentName || ''} ${t.parentName || ''} ${(t.tags || []).join(' ')}`.toLowerCase();
-        return combined.includes(term);
-      });
-    }
-    if (filters.departmentId) {
-      result = result.filter(t => t.departmentId === filters.departmentId);
-    }
-    if (filters.campusId || filters.schoolId || filters.divisionId || filters.gradeId) {
-      result = result.filter(t => {
-        // Email tickets may store names / mailbox routing options, instead of IDs.
-        const record = t as Ticket & {
-          campusName?: string; school?: string; schoolName?: string; schoolNames?: string[];
-          division?: string; divisionName?: string; divisionNames?: string[];
-          grade?: string; gradeName?: string; grades?: string[]; allowedGrades?: string[];
-          routingOptions?: Array<{ school?: string; division?: string; grades?: string[] }>;
-          // ticket_summaries carry a de-duplicated copy of the three routingOptions value
-          // lists instead of the (large) routingOptions array. matchesScope only checks
-          // whether ANY value matches, so the de-duplicated lists give the same result.
-          routingScope?: { schools: unknown[]; divisions: unknown[]; grades: unknown[] };
-        };
-        const routes = record.routingOptions || [];
-        const scope = record.routingScope;
-        return matchesScope([record.campusId, record.campusName], filters.campusId, campuses)
-          && matchesScope([record.schoolId, record.school, record.schoolName, record.schoolNames, scope ? scope.schools : routes.map(r => r.school)], filters.schoolId, schools)
-          && matchesScope([record.divisionId, record.division, record.divisionName, record.divisionNames, scope ? scope.divisions : routes.map(r => r.division)], filters.divisionId, divisions)
-          && matchesScope([record.gradeId, record.grade, record.gradeName, record.grades, record.allowedGrades, scope ? scope.grades : routes.flatMap(r => r.grades || [])], filters.gradeId, grades);
-      });
-    }
-    if (filters.channel) {
-      const filterChannel = filters.channel.toLowerCase();
-      result = result.filter(t => {
-        const chan = (t.channel || '').toLowerCase();
-        const source = ((t as any).source || '').toLowerCase();
-        if (filterChannel === 'web') return chan === 'web' || chan === 'website' || chan === 'api' || source === 'api' || source === 'website';
-        return chan === filterChannel || source === filterChannel;
-      });
-    }
-    if (filters.dateRange?.from) {
-      const validFrom = new Date(filters.dateRange.from);
-      if (!isNaN(validFrom.getTime())) {
-        const start = startOfDay(validFrom);
-        const validTo = filters.dateRange.to ? new Date(filters.dateRange.to) : null;
-        const end = (validTo && !isNaN(validTo.getTime())) ? endOfDay(validTo) : endOfDay(validFrom);
-        result = result.filter(t => {
-          const created = toDate(t.createdAt);
-          return created && created >= start && created <= end;
-        });
-      }
-    }
+    let result = applyTicketsFilters(tickets, viewFilters, { campuses, schools, divisions, grades }, !!allDepartments);
     if (filters.sla !== 'all') {
       result = result.filter(t => {
         // Excluded statuses must never appear in breached or at-risk SLA filters.
@@ -566,25 +527,16 @@ function TicketsContent() {
   // with identical inputs (it never reads filters.status). Compute it once and share.
   // Deps are exactly the deps both consumers had before.
   const filteredBase = useMemo(() => {
+    if (pagedMode) return null;
     if (!roleFilteredTickets) return null;
     return applyFilters(roleFilteredTickets);
-  }, [roleFilteredTickets, filters, slaSettings, now, allDepartments]);
+  }, [pagedMode, roleFilteredTickets, filters, slaSettings, now, allDepartments]);
 
   const statusCounts = useMemo(() => {
-    if (!roleFilteredTickets || !filteredBase) return { all: 0, Open: 0, 'In Progress': 0, Resolved: 0, Closed: 0, Queue: 0, Duplicate: 0, Ignored: 0, Waiting: 0 };
-    const base = filteredBase;
-    return {
-      all: base.length,
-      Open: base.filter(t => (t.status || '').toLowerCase() === 'open').length,
-      'In Progress': base.filter(t => (t.status || '').toLowerCase() === 'in progress').length,
-      Resolved: base.filter(t => (t.status || '').toLowerCase() === 'resolved').length,
-      Closed: base.filter(t => (t.status || '').toLowerCase() === 'closed').length,
-      Queue: base.filter(t => (t.status || '').toLowerCase() === 'queue').length,
-      Duplicate: base.filter(t => (t.status || '').toLowerCase() === 'duplicate').length,
-      Ignored: base.filter(t => (t.status || '').toLowerCase() === 'ignored').length,
-      Waiting: base.filter(t => (t.status || '').toLowerCase() === 'waiting').length,
-    };
-  }, [roleFilteredTickets, filteredBase]);
+    if (pagedMode) return view.statusCounts || EMPTY_STATUS_COUNTS;
+    if (!roleFilteredTickets || !filteredBase) return EMPTY_STATUS_COUNTS;
+    return ticketsStatusCounts(filteredBase);
+  }, [pagedMode, view.statusCounts, roleFilteredTickets, filteredBase]);
 
   // Background auto-assignment: when an available agent is active and queued tickets exist, auto-assign periodically
   const lastAutoAssignRef = useRef<number>(0);
@@ -611,24 +563,39 @@ function TicketsContent() {
   }, [statusCounts?.Queue, userProfile?.status, userProfile?.departmentId, userProfile?.role, isAutoAssigning, toast, t]);
 
   const sortedAndFilteredTickets = useMemo(() => {
+    if (pagedMode) return null;
     if (!roleFilteredTickets || !filteredBase) return null;
-    // Copy so the in-place sort below never reorders the shared filteredBase array.
-    let result = [...filteredBase];
-    if (filters.status) {
-      const filterStatus = filters.status.toLowerCase();
-      result = result.filter(t => (t.status || '').toLowerCase() === filterStatus);
-    }
-    return result.sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0));
-  }, [roleFilteredTickets, filteredBase, filters.status]);
+    return sortTicketsForList(filteredBase, filters.status);
+  }, [pagedMode, roleFilteredTickets, filteredBase, filters.status]);
 
-  const totalItems = sortedAndFilteredTickets?.length || 0;
+  const totalItems = pagedMode ? view.totalItems : (sortedAndFilteredTickets?.length || 0);
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
 
   const paginatedTickets = useMemo(() => {
+    if (pagedMode) return view.rows;
     if (!sortedAndFilteredTickets) return null;
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
     return sortedAndFilteredTickets.slice(start, start + ITEMS_PER_PAGE);
-  }, [sortedAndFilteredTickets, currentPage]);
+  }, [pagedMode, view.rows, sortedAndFilteredTickets, currentPage]);
+
+  const fetchAllRows = view.fetchAllRows;
+  const exportRows = useCallback(() => fetchAllRows(), [fetchAllRows]);
+
+  // Paged mode: the ordered [id, assigneeUserId] list for the current filters, used by the
+  // click-capture below to store next/prev navigation order (main). Refreshed after each view
+  // response; keyed by the request so a stale list is never used for different filters.
+  const orderedIdsRef = useRef<{ key: string; ids: Array<[string, string | null]> } | null>(null);
+  const { fetchOrderedIds, requestKey: viewRequestKey, rows: viewRows } = view;
+  useEffect(() => {
+    if (!pagedMode || !viewRequestKey || viewRows === null) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      fetchOrderedIds()
+        .then(ids => { if (!cancelled) orderedIdsRef.current = { key: viewRequestKey, ids }; })
+        .catch(() => { /* click falls back to the visible page */ });
+    }, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [pagedMode, viewRequestKey, viewRows, fetchOrderedIds]);
 
   const handleFilterChange = useCallback((newFilters: any) => {
     startTransition(() => {
@@ -637,7 +604,7 @@ function TicketsContent() {
     });
   }, []);
 
-  const isLoading = isUserLoading || isProfileLoading || areDepartmentsLoading || areTicketsLoading;
+  const isLoading = isUserLoading || isProfileLoading || areDepartmentsLoading || (pagedMode ? view.isLoading : areTicketsLoading);
 
   const departmentsForFilter = useMemo(() => {
     if (!allDepartments) return [];
@@ -702,7 +669,7 @@ function TicketsContent() {
           <MemoizedTicketFilters
             departments={departmentsForFilter.length > 0 ? departmentsForFilter : (allDepartments || [])}
             campuses={campuses || []}
-            assigneeOptions={assignedToOptions}
+            assigneeOptions={assigneeOptionsForFilter}
             schools={schools || []}
             divisions={divisions || []}
             grades={grades || []}
@@ -712,14 +679,16 @@ function TicketsContent() {
             visibleColumns={visibleColumns}
             onVisibleColumnsChange={handleVisibleColumnsChange}
             data={sortedAndFilteredTickets || []}
+            onExportRows={pagedMode ? exportRows : undefined}
+            exportDisabled={pagedMode ? totalItems === 0 : undefined}
             statusCounts={statusCounts}
           />
         )}
 
         <div
-          className={cn("transition-opacity duration-200", isPending ? "opacity-50 pointer-events-none" : "opacity-100")}
+          className={cn("transition-opacity duration-200", (isPending || (pagedMode && view.isFetching && !view.isLoading)) ? "opacity-50 pointer-events-none" : "opacity-100")}
           onClickCapture={(event) => {
-            if (!user || !paginatedTickets || !sortedAndFilteredTickets) return;
+            if (!user || !paginatedTickets || (!pagedMode && !sortedAndFilteredTickets)) return;
             const target = event.target as HTMLElement;
             // The checkbox is for selection, not for opening a ticket.
             if (target.closest('[role="checkbox"], button, a')) return;
@@ -737,13 +706,19 @@ function TicketsContent() {
               sessionStorage.setItem('nis_my_ticket_navigation_v1', JSON.stringify({
                 userId: user.uid,
                 targetTicketId: openedTicket.id,
-                orderedTicketIds: sortedAndFilteredTickets
-                  .filter(item =>
+                orderedTicketIds: (pagedMode
+                  // paged mode: full ordered [id, assigneeUserId] list fetched from the server for the
+                  // current filters (falls back to the visible page if it has not arrived yet)
+                  ? (orderedIdsRef.current && orderedIdsRef.current.key === view.requestKey
+                      ? orderedIdsRef.current.ids
+                      : paginatedTickets.map(item => [item.id, item.assignedTo?.userId ?? null] as [string, string | null]))
+                  : sortedAndFilteredTickets!.map(item => [item.id, item.assignedTo?.userId ?? null] as [string, string | null]))
+                  .filter(([, assigneeUid]) =>
                     userProfile?.role === 'Employee'
-                      ? item.assignedTo?.userId === user.uid
+                      ? assigneeUid === user.uid
                       : true
                   )
-                  .map(item => item.id),
+                  .map(([id]) => id),
                 capturedAt: Date.now(),
               }));
             } catch (error) {

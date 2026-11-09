@@ -18,6 +18,8 @@
  *   node scripts/backfill-ticket-summaries.cjs --fast-load-uids uid1,uid2   # fast load for these users only (staged rollout)
  *   node scripts/backfill-ticket-summaries.cjs --fast-load on   # fast load for everyone
  *   node scripts/backfill-ticket-summaries.cjs --fast-load off  # fast load kill switch (keeps summaries on)
+ *   node scripts/backfill-ticket-summaries.cjs --paged-tickets-uids uid1,uid2   # server-paged tickets list for these users
+ *   node scripts/backfill-ticket-summaries.cjs --paged-tickets on|off          # server-paged tickets list for everyone / off
  *
  * Credentials: Application Default Credentials (gcloud auth application-default login).
  */
@@ -222,6 +224,23 @@ const argv = process.argv.slice(2);
 const argAfter = name => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 
 (async () => {
+    const pagedArg = argAfter("--paged-tickets");
+    const pagedUidsArg = argAfter("--paged-tickets-uids");
+    if (pagedArg === "off") {
+        await setFastLoad({ pagedTickets: false, pagedTicketsUids: [] });
+        return;
+    }
+    if (pagedArg === "on" || pagedUidsArg !== undefined) {
+        // Same preflight: the live-refresh listeners rely on the stamping mirror + tombstone rules.
+        if (!(await fastLoadPreflight())) {
+            console.error("NOT enabling paged tickets.");
+            process.exitCode = 1;
+            return;
+        }
+        if (pagedArg === "on") await setFastLoad({ pagedTickets: true });
+        else await setFastLoad({ pagedTicketsUids: pagedUidsArg.split(",").map(s => s.trim()).filter(Boolean) });
+        return;
+    }
     const fastArg = argAfter("--fast-load");
     const uidsArg = argAfter("--fast-load-uids");
     if (fastArg === "off") {
