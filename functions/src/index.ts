@@ -883,9 +883,11 @@ const makeSyncEmails = (database: string) => onSchedule(
 
             const deptsSnapshot = await db.collection("departments").get();
 
+            // Document id LAST: a stray "id" field inside the document must never replace it,
+            // or employees are looked up under the wrong category and nothing is assigned.
             const allDepts = deptsSnapshot.docs.map((doc) => ({
-                id: doc.id,
                 ...(doc.data() as any),
+                id: doc.id,
             }));
 
             const mailboxConfigs = await loadMailboxConfigs(db);
@@ -1385,8 +1387,8 @@ const makeSyncEmails = (database: string) => onSchedule(
                                             const available =
                                                 empSnapshot.docs
                                                     .map((doc) => ({
-                                                        id: doc.id,
                                                         ...(doc.data() as any),
+                                                        id: doc.id,
                                                     }))
                                                     .filter((employee) =>
                                                         employeeMatchesMailbox(

@@ -91,16 +91,21 @@ export function MailboxDialog({ isOpen, onClose, mailbox }: MailboxDialogProps) 
     [users, departmentId, campusId]
   );
 
-  // Keep dependent selections valid.
+  // Keep dependent selections valid, but only once the lists they depend on have loaded.
+  // Pruning against a still-empty list wiped the saved campus, schools and divisions on edit.
+  const structureLoaded = !!departments && !!campuses && !!schools && !!divisions;
   useEffect(() => {
+    if (!structureLoaded) return;
     if (campusId && !campusOptions.some((c) => c.id === campusId)) setCampusId('');
-  }, [campusOptions, campusId]);
+  }, [structureLoaded, campusOptions, campusId]);
   useEffect(() => {
-    setSchoolIds((prev) => prev.filter((id) => schoolOptions.some((o) => o.id === id)));
-  }, [schoolOptions]);
+    if (!structureLoaded) return;
+    setSchoolIds((prev) => (prev.every((id) => schoolOptions.some((o) => o.id === id)) ? prev : prev.filter((id) => schoolOptions.some((o) => o.id === id))));
+  }, [structureLoaded, schoolOptions]);
   useEffect(() => {
-    setDivisionIds((prev) => prev.filter((id) => divisionOptions.some((o) => o.id === id)));
-  }, [divisionOptions]);
+    if (!structureLoaded) return;
+    setDivisionIds((prev) => (prev.every((id) => divisionOptions.some((o) => o.id === id)) ? prev : prev.filter((id) => divisionOptions.some((o) => o.id === id))));
+  }, [structureLoaded, divisionOptions]);
 
   useEffect(() => {
     if (state !== lastProcessedRef.current) {
