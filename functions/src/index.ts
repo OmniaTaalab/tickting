@@ -195,6 +195,25 @@ async function createGmailClient(
     });
 }
 
+/**
+ * Staging only: recipients that may receive real emails from the test environment
+ * (testers using their own address as the "parent"). Comma-separated in
+ * STAGING_EMAIL_ALLOWLIST. Everyone else is redirected to STAGING_EMAIL_REDIRECT_TO,
+ * so a real parent can never be emailed from staging. Production passes no redirect
+ * and is unaffected.
+ */
+const STAGING_EMAIL_ALLOWLIST = new Set(
+    String(process.env.STAGING_EMAIL_ALLOWLIST || "")
+        .split(",")
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean)
+);
+
+function plainAddress(value: string): string {
+    const match = String(value || "").match(/<([^>]+)>/);
+    return (match ? match[1] : String(value || "")).trim().toLowerCase();
+}
+
 async function sendHtmlEmail(args: {
     key: any;
     senderEmail: string;
@@ -211,9 +230,20 @@ async function sendHtmlEmail(args: {
         ["https://www.googleapis.com/auth/gmail.send"]
     );
 
+    // redirectTo is only set by the staging functions.
+    const allowDirect = Boolean(args.redirectTo) && STAGING_EMAIL_ALLOWLIST.has(plainAddress(args.to));
+    const recipient = args.redirectTo && !allowDirect ? args.redirectTo : args.to;
+    if (args.redirectTo) {
+        console.log(
+            allowDirect
+                ? `STAGING EMAIL delivered directly to allow-listed ${args.to}`
+                : `STAGING EMAIL for ${args.to} redirected to ${args.redirectTo} (not in STAGING_EMAIL_ALLOWLIST)`
+        );
+    }
+
     const rawMessage = [
         `From: ${args.fromName || "NIS CRM Support"} <${args.senderEmail}>`,
-        `To: ${args.redirectTo || args.to}`,
+        `To: ${recipient}`,
         `Subject: ${args.redirectTo ? `[STAGING] ${args.subject}` : args.subject}`,
         ...(args.extraHeaders || []).filter(Boolean),
         "MIME-Version: 1.0",
