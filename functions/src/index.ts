@@ -675,7 +675,8 @@ async function extractEmailBody(
 async function extractAndUploadEmailAttachments(
     gmail: any,
     messageId: string,
-    payload: any
+    payload: any,
+    storagePrefix = ""
 ): Promise<string[]> {
     const attachmentUrls: string[] = [];
     const bucket = getStorage().bucket();
@@ -719,7 +720,7 @@ async function extractAndUploadEmailAttachments(
                     );
 
                     const filePath =
-                        `attachments/email/${messageId}/` +
+                        `${storagePrefix}attachments/email/${messageId}/` +
                         `${Date.now()}_${randomUUID()}_${safeName}`;
 
                     const token = randomUUID();
@@ -851,7 +852,14 @@ async function runWithConcurrency<T>(
     );
 }
 
-export const syncEmails = onSchedule(
+/**
+ * Gmail -> tickets sync for ONE Firestore database.
+ * Mailboxes come from that database's `mailboxes` collection (Settings > Email
+ * Configurations); tickets, processed markers, taxonomy and assignment all use the
+ * same database. Production and staging therefore never see each other's queues.
+ * Do not enable the same mailbox in both environments: each would create its own ticket.
+ */
+const makeSyncEmails = (database: string) => onSchedule(
     {
         schedule: "every 2 minutes",
         secrets: [GMAIL_SERVICE_ACCOUNT_KEY],
@@ -867,7 +875,8 @@ export const syncEmails = onSchedule(
             }
 
             const key = JSON.parse(keyString);
-            const db = admin.firestore();
+            const db = getFirestore(admin.app(), database);
+            const storagePrefix = database === "(default)" ? "" : `${database}/`;
 
             // Resolve mailbox names to actual Firestore document IDs once per sync run.
             const taxonomy = await loadAcademicTaxonomy(db);
@@ -970,7 +979,8 @@ export const syncEmails = onSchedule(
                                     await extractAndUploadEmailAttachments(
                                         gmail,
                                         msg.id,
-                                        msgData.data.payload
+                                        msgData.data.payload,
+                                        storagePrefix
                                     );
 
                                 let fullBodyText = (
@@ -2445,12 +2455,18 @@ export const {
     sendEmailToParentOnTransfer,
 } = makeTicketEmailFunctions({ database: "(default)", baseUrl: BASE_URL, redirectTo: undefined });
 
-export const staging = makeTicketEmailFunctions({
-    database: "staging",
-    baseUrl: "https://staging-tickting--studio-7708718228-149dc.us-central1.hosted.app",
-    redirectTo: process.env.STAGING_EMAIL_REDIRECT_TO,
-    requireRedirect: true,
-});
+export const syncEmails = makeSyncEmails("(default)");
+
+export const staging = {
+    ...makeTicketEmailFunctions({
+        database: "staging",
+        baseUrl: "https://staging-tickting--studio-7708718228-149dc.us-central1.hosted.app",
+        redirectTo: process.env.STAGING_EMAIL_REDIRECT_TO,
+        requireRedirect: true,
+    }),
+    // Deployed as `staging-syncEmails`: polls only the mailboxes configured in the staging database.
+    syncEmails: makeSyncEmails("staging"),
+};
 
 /**
  * Keeps ticket_summaries/{ticketId} (a lightweight copy without messages,
