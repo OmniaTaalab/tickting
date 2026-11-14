@@ -21,6 +21,10 @@
     {
       "database": "staging",
       "rules": "firestore.rules"
+    },
+    {
+      "database": "(default)",
+      "rules": "firestore.rules"
     }
   ]
 }
