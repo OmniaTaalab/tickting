@@ -84,7 +84,7 @@ type ScopeAgent = {
   grades?: string[];
   gradeName?: string;
 };
-type MailboxRule = { scope: string; assignTo: string[] };
+type MailboxRule = { scope: string; assignTo: string[]; departmentId: string | null };
 type Taxonomy = {
   schools: Map<string, string[]>;
   divisions: Map<string, string[]>;
@@ -127,14 +127,13 @@ async function loadTaxonomy(db: FirebaseFirestore.Firestore): Promise<Taxonomy> 
   ]);
   const mailboxes = new Map<string, MailboxRule>();
   for (const doc of mailboxSnap.docs) {
-    const data = doc.data() as { email?: string; scope?: string; assignTo?: string[] };
-    const email = normalizeScope(data.email).replace(/ /g, '');
+    const data = doc.data() as { email?: string; scope?: string; assignTo?: string[]; departmentId?: string };
     if (!data.email) continue;
     mailboxes.set(String(data.email).trim().toLowerCase(), {
       scope: data.scope || 'department',
       assignTo: Array.isArray(data.assignTo) ? data.assignTo.map(e => String(e).trim().toLowerCase()) : [],
+      departmentId: typeof data.departmentId === 'string' && data.departmentId.trim() ? data.departmentId.trim() : null,
     });
-    void email;
   }
   return { schools, divisions, grades, mailboxes };
 }
@@ -147,22 +146,50 @@ function agentCoversTicket(agent: ScopeAgent, ticket: ScopeTicket, taxonomy: Tax
   const ticketMailbox = String(ticket.mailboxEmail || '').trim().toLowerCase();
   const mailboxRule = ticketMailbox ? taxonomy.mailboxes.get(ticketMailbox) : undefined;
 
+  // A ticket keeps its original mailbox address for life, but once it is transferred to
+  // another category that mailbox no longer describes the queue it sits in. The mailbox's
+  // own rules (who serves it, its staff list) apply only while the ticket is still in the
+  // mailbox's category. A mailbox without a stored category is treated as owning the ticket.
+  const mailboxOwnsTicket = Boolean(mailboxRule) && (
+    !mailboxRule!.departmentId || !ticket.departmentId || mailboxRule!.departmentId === ticket.departmentId
+  );
+
   // Staff attached to specific mailboxes (Settings > Employees > "by mailbox") only
   // receive tickets from those mailboxes. Tickets without a mailbox (forms, phone,
-  // walk-in) still follow the normal scope rules.
+  // walk-in), tickets transferred in from another category's mailbox and tickets of a
+  // mailbox that is no longer configured follow the normal scope rules instead;
+  // otherwise nobody in the receiving category could ever be assigned to them.
   const agentMailboxes = textValues(agent.mailboxEmails).map(e => e.toLowerCase());
-  if (agentMailboxes.length && ticketMailbox && !agentMailboxes.includes(ticketMailbox)) return false;
+  if (agentMailboxes.length && ticketMailbox && mailboxOwnsTicket && !agentMailboxes.includes(ticketMailbox)) return false;
 
   // General Support and Operations have no campus or academic routing restrictions.
   // Their department is checked by the caller's Firestore query / scope guard.
   if (ticket.departmentId && DEPARTMENT_ONLY_IDS.has(ticket.departmentId)) return true;
-  if (mailboxRule?.scope === 'department') return true;
+  // Category-wide mailbox (no campus): anyone in the category. The one exception is "by
+  // mailbox" staff receiving a ticket transferred in WITH a campus: they are campus teams,
+  // so the campus is enforced below instead of handing it to another campus's team.
+  if (mailboxRule?.scope === 'department' &&
+      (mailboxOwnsTicket || !ticket.campusId || !agentMailboxes.length)) return true;
 
   const agentCampuses = textValues(agent.campusIds, agent.campusId);
   if (!ticket.campusId || !agentCampuses.includes(ticket.campusId)) return false;
 
+  // Transferred in (or mailbox no longer configured): "by mailbox" staff who serve a
+  // category-wide or campus-level queue of THIS category (Admissions, Collection...) carry
+  // no school/division/grade scope, so the campus (checked above) is what qualifies them.
+  // Staff of academic queues continue to the strict school/division/grade matching below.
+  if (ticketMailbox && !mailboxOwnsTicket && agentMailboxes.length) {
+    const servesCampusLevelQueue = agentMailboxes.some(address => {
+      const own = taxonomy.mailboxes.get(address);
+      return Boolean(own) && (own!.scope === 'department' || own!.scope === 'campus') &&
+        (!own!.departmentId || !ticket.departmentId || own!.departmentId === ticket.departmentId);
+    });
+    if (servesCampusLevelQueue) return true;
+  }
+
   // Director-style mailbox: only the listed staff, campus already checked above.
-  if (mailboxRule?.assignTo.length) {
+  // The staff list belongs to the mailbox's own category, so it is ignored after a transfer.
+  if (mailboxOwnsTicket && mailboxRule?.assignTo.length) {
     const agentEmail = String(agent.email || '').trim().toLowerCase();
     return Boolean(agentEmail) && mailboxRule.assignTo.includes(agentEmail);
   }
@@ -474,6 +501,7 @@ export async function autoAssignQueuedTickets(options?: {
     // !! If you read a new ticket field in this loop or in agentCoversTicket, add it here. !!
     const QUEUE_PROJECTION = [
       'createdAt', 'departmentId', 'ticketNumber', 'subject', 'campusId', 'campusName',
+      'pendingTransferRequestId', 'pendingLocalTransferRequestId',
       'schoolId', 'schoolName', 'school', 'divisionId', 'divisionName', 'division',
       'gradeId', 'gradeName', 'grade', 'grades', 'allowedGrades', 'routingOptions', 'mailboxEmail',
     ];

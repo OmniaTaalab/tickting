@@ -91,6 +91,37 @@ async function employeeCoversTicketScope(
     ));
 }
 
+/** Ticket fields set while a category-transfer request waits for a manager. */
+const PENDING_TRANSFER_CLEARED = {
+    pendingTransferRequestId: FieldValue.delete(),
+    pendingTransferCategoryId: FieldValue.delete(),
+    pendingTransferCategoryName: FieldValue.delete(),
+};
+
+/** Record the decision on the canonical request document (older requests have none). */
+async function closeTransferRequest(
+    db: NonNullable<typeof adminDb>,
+    requestId: string | undefined | null,
+    status: 'approved' | 'rejected',
+    actor: { userId: string, name: string }
+): Promise<void> {
+    if (!requestId) return;
+    try {
+        const requestRef = db.collection('ticket-transfer-requests').doc(requestId);
+        if (!(await requestRef.get()).exists) return;
+        await requestRef.update({
+            status,
+            processedBy: actor.name,
+            processedById: actor.userId,
+            processedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+        });
+    } catch (error) {
+        // The ticket itself is already updated; a stale request document must not fail the action.
+        console.error('Could not close transfer request', requestId, error);
+    }
+}
+
 /**
  * Approves a transfer or reassignment request.
  * Updates the ticket and all linked admin events to maintain consistency.
@@ -235,6 +266,9 @@ export async function approveRequestAction(
                 status: newStatus,
                 updatedAt: FieldValue.serverTimestamp(),
                 transferHistory: FieldValue.arrayUnion(transferRecord),
+                // The request is decided: the ticket is no longer "waiting for manager approval".
+                // Leaving these set blocks later transfers, Local Transfer and queue auto-assignment.
+                ...PENDING_TRANSFER_CLEARED,
             });
 
             batch.set(db.collection('ticket-transfers').doc(transferId), {
@@ -243,6 +277,7 @@ export async function approveRequestAction(
             });
 
             await batch.commit();
+            await closeTransferRequest(db, requestId, 'approved', actor);
 
             await logSystemEvent({
                 eventType: 'TICKET_TRANSFER_APPROVED',
@@ -395,6 +430,22 @@ export async function rejectRequestAction(eventId: string, actor: { userId: stri
             await batch.commit();
         } else {
             await db.collection('ticket-events').doc(eventId).update({ status: 'rejected', read: true, processedBy: actor.name });
+        }
+
+        // A rejected category transfer leaves the ticket in its own category's Queue. Release
+        // the "waiting for manager approval" hold so it can be assigned and transferred again.
+        // Only this request's hold is released, never one created by a newer request.
+        if (event.eventType === 'TICKET_TRANSFER_REQUESTED' && requestId) {
+            const ticketRef = db.collection('tickets').doc(ticketId);
+            await db.runTransaction(async (transaction) => {
+                const latest = await transaction.get(ticketRef);
+                if (!latest.exists || latest.data()?.pendingTransferRequestId !== requestId) return;
+                transaction.update(ticketRef, {
+                    ...PENDING_TRANSFER_CLEARED,
+                    updatedAt: FieldValue.serverTimestamp(),
+                });
+            });
+            await closeTransferRequest(db, requestId, 'rejected', actor);
         }
 
         await logSystemEvent({
