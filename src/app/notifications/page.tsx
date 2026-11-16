@@ -1,10 +1,10 @@
 
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { useCollection, useFirebase, useMemoFirebase, useUser, setDocumentNonBlocking } from '@/firebase';
-import { collection, query, where, doc, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, query, where, doc, orderBy, limit, getCountFromServer, getDocs, Timestamp } from 'firebase/firestore';
 import type { TicketEvent } from '@/lib/types';
 import { formatDistanceToNow, isToday, subDays } from 'date-fns';
 import { useRouter } from 'next/navigation';
@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLanguage } from '@/hooks/use-language';
+import { latestNotificationsUnavailable, markLatestNotificationsUnavailable } from '@/lib/notifications-index';
 
 const getIcon = (type: string) => {
     switch (type) {
@@ -37,6 +38,9 @@ const getBg = (type: string) => {
     }
 };
 
+/** Notifications loaded (and shown) at a time while no filter is active. */
+const NOTIFICATIONS_PAGE_SIZE = 50;
+
 export default function NotificationsPage() {
     const { firestore } = useFirebase();
     const { user } = useUser();
@@ -49,15 +53,76 @@ export default function NotificationsPage() {
     const [typeFilter, setTypeFilter] = useState<string>('all');
     const [dateFilter, setDateFilter] = useState<'all' | 'today' | '7days' | '30days'>('all');
 
+    const hasActiveFilters = searchQuery.trim() !== '' || readFilter !== 'all' || typeFilter !== 'all' || dateFilter !== 'all';
+
+    // PERF/COST: this page used to load EVERY notification the user ever received (about
+    // 1,500 for an admin) and draw them all. Now:
+    //  - no filter active  -> the newest NOTIFICATIONS_PAGE_SIZE, live, with "Load older";
+    //  - a filter / search -> everything, exactly as before (a filter must look at all of them).
+    // The newest-first query needs the composite index ticket-events (recipient ASC,
+    // timestamp DESC); if it is rejected (index not created yet) the page loads everything.
+    const [latestUnavailable, setLatestUnavailable] = useState(latestNotificationsUnavailable);
+    const [pageCount, setPageCount] = useState(1);
+    const pagedMode = !hasActiveFilters && !latestUnavailable;
+    const pagedLimit = pageCount * NOTIFICATIONS_PAGE_SIZE;
+
+    const latestQuery = useMemoFirebase(() => {
+        if (!firestore || !user || !pagedMode) return null;
+        return query(
+            collection(firestore, 'ticket-events'),
+            where('recipient', '==', user.uid),
+            orderBy('timestamp', 'desc'),
+            limit(pagedLimit)
+        );
+    }, [firestore, user, pagedMode, pagedLimit]);
+    const latest = useCollection<TicketEvent>(latestQuery);
+    useEffect(() => {
+        if (latest.error) {
+            markLatestNotificationsUnavailable();
+            setLatestUnavailable(true);
+        }
+    }, [latest.error]);
+
     const notificationsQuery = useMemoFirebase(() => {
-        if (!firestore || !user) return null;
+        if (!firestore || !user || pagedMode) return null;
         return query(
             collection(firestore, 'ticket-events'),
             where('recipient', '==', user.uid)
         );
-    }, [firestore, user]);
+    }, [firestore, user, pagedMode]);
+    const all = useCollection<TicketEvent>(notificationsQuery);
 
-    const { data: notifications, isLoading } = useCollection<TicketEvent>(notificationsQuery);
+    const notifications = pagedMode ? latest.data : all.data;
+    // Waiting for the current query's first answer. In paged mode "no data" always means
+    // waiting: if the newest-first query is rejected the page switches to the full query at
+    // once (above), so an empty list is never shown in between.
+    const listLoading = !!user && notifications === null && (pagedMode || all.error === null);
+    // The whole-page skeleton is for the very first load only. Later waits (typing a search
+    // switches to the full list; clearing it switches back) keep the filter bar on screen —
+    // replacing the page would take the keyboard focus away from the search box — and show
+    // the placeholder inside the list instead.
+    const everLoaded = useRef(false);
+    if (notifications !== null) everLoaded.current = true;
+    const isLoading = listLoading && !everLoaded.current;
+    const hasOlder = pagedMode && !!latest.data && latest.data.length >= pagedLimit;
+
+    // Unread total: counted by the server (one read per 1,000 unread) instead of loading them.
+    const [unreadTotal, setUnreadTotal] = useState<number | null>(null);
+    const latestSignature = pagedMode && latest.data ? `${latest.data.length}:${latest.data.filter(n => !n.read).length}:${latest.data[0]?.id ?? ''}` : null;
+    useEffect(() => {
+        if (!firestore || !user || !pagedMode || latestSignature === null) return;
+        let cancelled = false;
+        const timer = setTimeout(() => {
+            getCountFromServer(query(
+                collection(firestore, 'ticket-events'),
+                where('recipient', '==', user.uid),
+                where('read', '==', false)
+            ))
+                .then(snap => { if (!cancelled) setUnreadTotal(snap.data().count); })
+                .catch(() => { /* keep the previous number */ });
+        }, 800);
+        return () => { cancelled = true; clearTimeout(timer); };
+    }, [firestore, user, pagedMode, latestSignature]);
 
     const isWithinDateFilter = (timestamp: any, filter: string) => {
         if (filter === 'all' || !timestamp) return true;
@@ -111,8 +176,6 @@ export default function NotificationsPage() {
         setDateFilter('all');
     };
 
-    const hasActiveFilters = searchQuery.trim() !== '' || readFilter !== 'all' || typeFilter !== 'all' || dateFilter !== 'all';
-
     const handleNotificationClick = (notification: TicketEvent) => {
         if (!firestore) return;
         if (!notification.read) {
@@ -124,13 +187,30 @@ export default function NotificationsPage() {
 
     const handleMarkAllAsRead = () => {
         if (!firestore || !notifications) return;
+        if (pagedMode && user) {
+            // Not every unread notification is loaded here: fetch just the unread ones, then
+            // mark each exactly as before.
+            getDocs(query(
+                collection(firestore, 'ticket-events'),
+                where('recipient', '==', user.uid),
+                where('read', '==', false)
+            ))
+                .then(snap => {
+                    snap.docs.forEach(d => setDocumentNonBlocking(d.ref, { read: true }, { merge: true }));
+                    setUnreadTotal(0);
+                })
+                .catch(err => console.warn('Mark all as read failed:', err?.message || err));
+            return;
+        }
         notifications.filter(n => !n.read).forEach(notif => {
             const notifRef = doc(firestore, 'ticket-events', notif.id);
             setDocumentNonBlocking(notifRef, { read: true }, { merge: true });
         });
     };
 
-    const unreadCount = notifications ? notifications.filter(n => !n.read).length : 0;
+    const loadedUnread = notifications ? notifications.filter(n => !n.read).length : 0;
+    // Never show fewer unread than are visibly unread on screen.
+    const unreadCount = pagedMode ? Math.max(unreadTotal ?? 0, loadedUnread) : loadedUnread;
 
     if (isLoading) {
         return (
@@ -259,7 +339,11 @@ export default function NotificationsPage() {
 
             <Card className="border-none shadow-sm overflow-hidden bg-white">
                 <CardContent className="p-0">
-                    {filteredNotifications.length > 0 ? (
+                    {listLoading ? (
+                        <div className="p-6 space-y-4">
+                            {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+                        </div>
+                    ) : filteredNotifications.length > 0 ? (
                         <div className="divide-y divide-slate-100">
                             {filteredNotifications.map((notif) => (
                                 <div
@@ -294,6 +378,19 @@ export default function NotificationsPage() {
                                     </div>
                                 </div>
                             ))}
+                            {hasOlder && (
+                                <div className="p-4 text-center">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setPageCount(c => c + 1)}
+                                        disabled={latest.isLoading}
+                                        className="text-xs font-bold"
+                                    >
+                                        {t('loadOlderNotifications')}
+                                    </Button>
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="py-20 text-center flex flex-col items-center">

@@ -4,7 +4,9 @@
 
 import { adminDb } from '@/lib/firebaseAdmin';
 import type { UserProfile, Ticket } from '@/lib/types';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { getTicketSummarySnapshot } from '@/lib/server/ticket-summary-cache';
+import { compareDocIds } from '@/lib/ticket-scope';
 import { logSystemEvent } from '@/lib/system-log';
 import { revalidatePath } from 'next/cache';
 import { isWithinWorkingHours } from '@/lib/working-hours-utils';
@@ -522,7 +524,7 @@ const snapshotVersion = (snap: FirebaseFirestore.DocumentSnapshot): string =>
  * restart) only means the fields are read again. Identical values (the same mailbox routes
  * on thousands of tickets) share one object; nothing mutates them.
  */
-const queueDetailCache = new Map<string, { version: string; departmentId: string; detail: Record<string, unknown> }>();
+const queueDetailCache = new Map<string, { version: string; departmentId: string; detail: Record<string, unknown>; loadedAt: number }>();
 const internedDetailValues = new Map<string, unknown>();
 function internDetailValue(value: unknown): unknown {
   const key = JSON.stringify(value);
@@ -533,11 +535,126 @@ function internDetailValue(value: unknown): unknown {
   return value;
 }
 
+// ---- Queue scan from the in-memory ticket_summaries snapshot (optional) ----------------------
+/**
+ * settings/ticketSummaries { enabled: true, queueFromSummaries: true } — live switch.
+ *
+ * Off (default): every pass reads the small fields of EVERY queued ticket from Firestore
+ * (one document read per queued ticket, per pass; with thousands of tickets waiting for staff
+ * who are offline that is millions of reads a day).
+ * On: the pass takes the queued tickets from this instance's in-memory copy of
+ * ticket_summaries (src/lib/server/ticket-summary-cache.ts — the copy the paged tickets list
+ * uses, kept current by reading only the summaries that changed). The mirror copies the
+ * fields the pass reads verbatim (verified on every queued production ticket). Nothing else
+ * changes: the large fields are still read from `tickets`, and the assignment transaction
+ * still re-reads the real ticket, agent and category and re-checks everything before writing.
+ * A ticket that entered the Queue a moment ago may not be in the copy yet; the next pass
+ * (at most 30 s later) takes it.
+ *
+ * The switch is re-read at most every 30 s per instance. Any error => the direct read.
+ */
+const QUEUE_FLAG_TTL_MS = 30_000;
+let queueFlagCache: { at: number; on: boolean } | null = null;
+async function queueFromSummariesEnabled(db: FirebaseFirestore.Firestore): Promise<boolean> {
+  const now = Date.now();
+  if (queueFlagCache && now - queueFlagCache.at < QUEUE_FLAG_TTL_MS) return queueFlagCache.on;
+  let on = false;
+  try {
+    const flags = (await db.collection('settings').doc('ticketSummaries').get()).data();
+    on = flags?.enabled === true && flags?.queueFromSummaries === true;
+  } catch {
+    on = false;
+  }
+  queueFlagCache = { at: now, on };
+  return on;
+}
+
+/** Versions taken from a summary; never equal to a ticket's own update time. */
+const SUMMARY_VERSION_PREFIX = 's:';
+/**
+ * A summary's version changes whenever a field the mirror copies changes. routingOptions is
+ * copied in a condensed form, and no code changes it after a ticket is created; should it
+ * ever be edited by hand without changing the summary, the large fields are read again after
+ * this long anyway.
+ */
+const SUMMARY_DETAIL_MAX_AGE_MS = 60 * 60 * 1000;
+/** The copy must be at least this recent when a pass starts (it then catches up first). */
+const SUMMARY_MAX_STALENESS_MS = 1_500;
+
+async function loadQueueFromSummaries(
+  db: FirebaseFirestore.Firestore,
+  departmentId: string | undefined
+): Promise<QueuedTicket[]> {
+  const { docs } = await getTicketSummarySnapshot(db, Timestamp.fromMillis(Date.now() - SUMMARY_MAX_STALENESS_MS));
+  const ids: string[] = [];
+  docs.forEach((entry, id) => {
+    const summary = entry.data;
+    if (summary.status === 'Queue' && (!departmentId || summary.departmentId === departmentId)) ids.push(id);
+  });
+  // The order a Firestore query returns its documents in; the created-date sort below is
+  // stable, so tickets created at the same instant keep exactly the order they had before.
+  ids.sort(compareDocIds);
+  return ids.map(id => {
+    const summary = docs.get(id)!.data;
+    // Only the fields the direct scan selects — present keys only, as a projection returns them.
+    const data: FirebaseFirestore.DocumentData = {};
+    for (const field of QUEUE_LIGHT_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(summary, field)) data[field] = summary[field];
+    }
+    const synced = summary._summarySyncedAt;
+    const stamp = synced && typeof synced.seconds === 'number' && typeof synced.nanoseconds === 'number'
+      ? `${synced.seconds}.${synced.nanoseconds}`
+      : 'unstamped';
+    return { id, version: SUMMARY_VERSION_PREFIX + stamp, data, hasDetail: false };
+  });
+}
+
+/**
+ * Per server instance: at most ONE Queue pass runs at a time for the same request
+ * (same category / same ticket), plus at most one waiting to start.
+ *
+ * Every Available user's tickets page asks for a pass every 30 s, and a status change or a
+ * transfer decision asks for one too. They used to run side by side on the same CPU, each
+ * reading the whole Queue, which is how single passes reached 20-30 s. A caller that arrives
+ * while a pass is running does NOT join it (that pass may have read the agents before the
+ * caller's own change, e.g. before they became Available): it shares the next pass, which
+ * starts only after the running one ends, so it always sees the caller's state.
+ */
+const autoAssignRunning = new Map<string, Promise<void>>();
+const autoAssignWaiting = new Map<string, Promise<AutoAssignResult>>();
+
 /**
  * Automatically assigns queued tickets (status === 'Queue') to available, logged-in agents
  * using fair round-robin distribution per department and campus/school/division/grade coverage.
  */
 export async function autoAssignQueuedTickets(options?: {
+  departmentId?: string;
+  ticketId?: string;
+}): Promise<AutoAssignResult> {
+  const key = JSON.stringify([options?.departmentId ?? null, options?.ticketId ?? null]);
+
+  const waiting = autoAssignWaiting.get(key);
+  if (waiting) return waiting;
+
+  const start = (): Promise<AutoAssignResult> => {
+    autoAssignWaiting.delete(key);
+    const run = runAutoAssignQueuedTickets(options);
+    const settled: Promise<void> = run.then(() => undefined, () => undefined).finally(() => {
+      if (autoAssignRunning.get(key) === settled) autoAssignRunning.delete(key);
+    });
+    autoAssignRunning.set(key, settled);
+    return run;
+  };
+
+  const running = autoAssignRunning.get(key);
+  if (!running) return start();
+
+  const next = running.then(start);
+  autoAssignWaiting.set(key, next);
+  return next;
+}
+
+async function runAutoAssignQueuedTickets(options?: {
   departmentId?: string;
   ticketId?: string;
 }): Promise<AutoAssignResult> {
@@ -564,6 +681,8 @@ export async function autoAssignQueuedTickets(options?: {
     //     (queueDetailCache). The assignment transaction below still re-reads the FULL ticket
     //     and re-checks everything before writing, exactly as before.
     let queued: QueuedTicket[];
+    // true: `queued` came from the ticket_summaries copy (see loadQueueFromSummaries).
+    let fromSummaries = false;
     if (options?.ticketId) {
       const snap = await db.collection('tickets').doc(options.ticketId).get();
       const data = snap.data();
@@ -571,13 +690,26 @@ export async function autoAssignQueuedTickets(options?: {
         (!options.departmentId || data!.departmentId === options.departmentId);
       queued = isQueued ? [{ id: snap.id, version: snapshotVersion(snap), data: data!, hasDetail: true }] : [];
     } else {
-      let queryRef = db.collection('tickets').where('status', '==', 'Queue');
-      if (options?.departmentId) {
-        queryRef = queryRef.where('departmentId', '==', options.departmentId);
+      let viaSummaries: QueuedTicket[] | null = null;
+      if (await queueFromSummariesEnabled(db)) {
+        try {
+          viaSummaries = await loadQueueFromSummaries(db, options?.departmentId);
+        } catch (summaryError: any) {
+          console.warn('[auto-assign] ticket_summaries copy unavailable, reading the Queue directly:', summaryError?.message || summaryError);
+        }
       }
-      // A projection never filters documents (docs missing these fields are still returned).
-      const queuedSnap = await queryRef.select(...QUEUE_LIGHT_FIELDS).get();
-      queued = queuedSnap.docs.map(d => ({ id: d.id, version: snapshotVersion(d), data: d.data(), hasDetail: false }));
+      if (viaSummaries) {
+        queued = viaSummaries;
+        fromSummaries = true;
+      } else {
+        let queryRef = db.collection('tickets').where('status', '==', 'Queue');
+        if (options?.departmentId) {
+          queryRef = queryRef.where('departmentId', '==', options.departmentId);
+        }
+        // A projection never filters documents (docs missing these fields are still returned).
+        const queuedSnap = await queryRef.select(...QUEUE_LIGHT_FIELDS).get();
+        queued = queuedSnap.docs.map(d => ({ id: d.id, version: snapshotVersion(d), data: d.data(), hasDetail: false }));
+      }
     }
 
     if (queued.length === 0) {
@@ -708,7 +840,8 @@ export async function autoAssignQueuedTickets(options?: {
         if (!isWithinWorkingHours(deptInfo.workingHours, passStartedAt, activeHolidays)) continue;
 
         const cached = queueDetailCache.get(q.id);
-        if (cached && cached.version === q.version) {
+        if (cached && cached.version === q.version &&
+            (!fromSummaries || Date.now() - cached.loadedAt < SUMMARY_DETAIL_MAX_AGE_MS)) {
           Object.assign(q.data, cached.detail);
           q.hasDetail = true;
           continue;
@@ -743,9 +876,11 @@ export async function autoAssignQueuedTickets(options?: {
               data[field] = detail[field];
             }
             q.data = data;
-            q.version = snapshotVersion(snap);
+            // Direct scan: the ticket's own update time (the next scan reports the same value
+            // while the ticket is unchanged). Summary scan: keep the summary's version.
+            if (!fromSummaries) q.version = snapshotVersion(snap);
             q.hasDetail = true;
-            queueDetailCache.set(q.id, { version: q.version, departmentId: String(data.departmentId || ''), detail });
+            queueDetailCache.set(q.id, { version: q.version, departmentId: String(data.departmentId || ''), detail, loadedAt: Date.now() });
           });
         }));
       }
@@ -914,6 +1049,9 @@ export async function autoAssignQueuedTickets(options?: {
         return true;
       });
       if (!assigned) {
+        // The real ticket / agent did not match what this pass believed. With the summary
+        // scan, drop the remembered large fields so the next pass reads them afresh.
+        if (fromSummaries) queueDetailCache.delete(ticketId);
         skippedTickets.push({ ticketId, ticketNumber: ticket.ticketNumber, subject: ticket.subject,
           reason: 'Ticket or employee changed while assigning; will retry on the next Queue pass' });
         continue;

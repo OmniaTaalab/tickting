@@ -65,6 +65,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import Image from 'next/image';
 import { useLanguage } from '@/hooks/use-language';
 import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
+import { useTicketsList, useTicketFlags } from '@/hooks/use-tickets-list';
+import { useTicketNav } from '@/hooks/use-ticket-nav';
+import { ticketNavScope } from '@/lib/ticket-scope';
 const toDate = (ts: any): Date | null => {
   if (!ts) return null;
   if (typeof ts.toDate === 'function') return ts.toDate();
@@ -767,15 +770,33 @@ export default function TicketDetailPage() {
   const { data: savedSLA } = useDoc<SLASettings>(slaRef);
   const slaSettings = savedSLA || DEFAULT_SLA_SETTINGS;
   // Read-only ticket navigation. This never changes ticket assignment or status.
-  const myTicketsQuery = useMemoFirebase(
-  () => firestore && currentUser && userProfile
-    ? query(collection(firestore, 'tickets'))
-    : null,
-  [firestore, currentUser, userProfile]
-);
+  // PERF/COST: this used to subscribe to the ENTIRE `tickets` collection (every ticket with all
+  // of its messages) each time a ticket was opened, and again on every profile snapshot. The
+  // code below reads only id / departmentId / campusId / assignedTo / createdAt, so load the
+  // lightweight ticket_summaries for just the tickets this role can navigate (ticketNavScope is
+  // a superset of the role filter below, which still runs unchanged). The scope depends on
+  // primitives only, so status toggles no longer restart the listener.
+  const navRole = userProfile?.role;
+  const navDepartmentId = userProfile?.departmentId;
+  const navUid = currentUser?.uid;
+  // Joined so the memo below depends on the campus list's content, not the array's identity.
+  const navCampusKey = Array.isArray(userProfile?.campusIds) ? JSON.stringify(userProfile.campusIds) : '';
+  // With server-computed lists switched on for this viewer (the same switch as the paged
+  // tickets list), Previous / Next come from /api/tickets/nav — two ids — and no list is
+  // loaded here at all. The scoped list below stays as the fallback if that request fails.
+  const navFlags = useTicketFlags();
+  const [serverNavFailed, setServerNavFailed] = useState(false);
+  const serverNavOn = !!(navFlags?.enabled && navUid && navRole
+    && (navFlags.pagedTickets || navFlags.pagedTicketsUids.includes(navUid))) && !serverNavFailed;
+  const navScope = useMemo(
+    () => (firestore && navUid && navRole && !serverNavOn
+      ? ticketNavScope(navRole, navUid, navDepartmentId, navCampusKey ? JSON.parse(navCampusKey) : undefined)
+      : null),
+    [firestore, navUid, navRole, navDepartmentId, navCampusKey, serverNavOn]
+  );
 
 const { data: allNavigationTickets, isLoading: areMyTicketsLoading } =
-  useCollection<Ticket>(myTicketsQuery);
+  useTicketsList<Ticket>(navScope, { keepAlive: true, projection: 'nav' });
 
 const myAssignedTickets = useMemo(() => {
   if (!currentUser || !userProfile || !allNavigationTickets) return [];
@@ -849,6 +870,12 @@ const myAssignedTickets = useMemo(() => {
       setLastListOrder(null);
     }
   }, [currentUser?.uid, ticketId]);
+  // Runs right after the effect above, in the same commit: marks that `lastListOrder` now
+  // belongs to this viewer + ticket, so the server is asked once, with the right order.
+  const [listOrderReadyFor, setListOrderReadyFor] = useState<string | null>(null);
+  useEffect(() => {
+    setListOrderReadyFor(currentUser ? `${currentUser.uid}|${ticketId}` : null);
+  }, [currentUser?.uid, ticketId]);
 
   const orderedMyTicketIds = useMemo(() => {
     const tickets = myAssignedTickets || [];
@@ -864,11 +891,28 @@ const myAssignedTickets = useMemo(() => {
       })
       .map(item => item.id);
   }, [myAssignedTickets, lastListOrder]);
-  const myTicketPosition = orderedMyTicketIds.indexOf(ticketId);
-  const previousMyTicketId = myTicketPosition > 0
-    ? orderedMyTicketIds[myTicketPosition - 1] : null;
-  const nextMyTicketId = myTicketPosition >= 0
-    ? (orderedMyTicketIds[myTicketPosition + 1] || null) : null;
+  const localTicketPosition = orderedMyTicketIds.indexOf(ticketId);
+  const serverNav = useTicketNav({
+    enabled: serverNavOn && listOrderReadyFor === `${navUid}|${ticketId}`,
+    ticketId,
+    listOrder: lastListOrder,
+    profileKey: userProfile
+      ? `${userProfile.role}|${userProfile.departmentId}|${Array.isArray(userProfile.campusIds) ? userProfile.campusIds.join(',') : ''}`
+      : null,
+  });
+  useEffect(() => {
+    if (serverNav.status === 'failed') setServerNavFailed(true);
+  }, [serverNav.status]);
+  // Same three values as before; they come from the server when it is in charge.
+  const myTicketPosition = serverNavOn
+    ? (serverNav.status === 'ready' && serverNav.visible ? 0 : -1)
+    : localTicketPosition;
+  const previousMyTicketId = serverNavOn
+    ? serverNav.prev
+    : (localTicketPosition > 0 ? orderedMyTicketIds[localTicketPosition - 1] : null);
+  const nextMyTicketId = serverNavOn
+    ? serverNav.next
+    : (localTicketPosition >= 0 ? (orderedMyTicketIds[localTicketPosition + 1] || null) : null);
   const navigateMyTickets = (destinationId: string | null) => {
     if (!destinationId || !currentUser) return;
     router.push(`/tickets/${destinationId}${lastListOrder ? '?myListNav=1' : ''}`);

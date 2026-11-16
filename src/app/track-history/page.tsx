@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import { useFirebase, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
 import { useTicketsList } from '@/hooks/use-tickets-list';
+import { useTicketsByIds, MAX_TICKETS_BY_IDS } from '@/hooks/use-tickets-by-ids';
 import type { TicketScope } from '@/lib/ticket-scope';
 
 const TRACK_HISTORY_SCOPE: TicketScope = { kind: 'all' };
@@ -58,14 +59,6 @@ export default function TrackHistoryPage() {
     [firestore]
   );
   const { data: directTransfers, isLoading: isTransfersLoading } = useCollection<TicketTransferRecord>(transfersQuery);
-
-  // PERF: lightweight ticket_summaries (only assignedTo is read from these tickets).
-  const { data: allTickets } = useTicketsList<Ticket>(firestore ? TRACK_HISTORY_SCOPE : null, { keepAlive: true });
-
-  const ticketsMap = useMemo(() => {
-    if (!allTickets) return new Map<string, Ticket>();
-    return new Map(allTickets.map(t => [t.id, t]));
-  }, [allTickets]);
 
   const departmentsQuery = useMemoFirebase(
     () => (firestore ? query(collection(firestore, 'departments')) : null),
@@ -150,6 +143,27 @@ export default function TrackHistoryPage() {
       return isActor || isCampus;
     });
   }, [allTransfers, userProfile, user]);
+
+  // PERF/COST: only departmentId and assignedTo of the tickets named by these transfer
+  // records are read (to show the current assignee). This page used to subscribe to EVERY
+  // ticket in the system for that; load just those tickets by id instead. Should the list
+  // ever grow past MAX_TICKETS_BY_IDS distinct tickets, fall back to the previous full scope.
+  const transferTicketIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const tr of scopedTransfers) {
+      if (typeof tr.ticketId === 'string' && tr.ticketId) ids.add(tr.ticketId);
+    }
+    return Array.from(ids).sort();
+  }, [scopedTransfers]);
+  const tooManyForById = transferTicketIds.length > MAX_TICKETS_BY_IDS;
+  const ticketsById = useTicketsByIds<Ticket>(tooManyForById ? null : transferTicketIds);
+  const { data: allTickets } = useTicketsList<Ticket>(firestore && tooManyForById ? TRACK_HISTORY_SCOPE : null, { keepAlive: true });
+
+  const ticketsMap = useMemo(() => {
+    if (!tooManyForById) return ticketsById as Map<string, Ticket>;
+    if (!allTickets) return new Map<string, Ticket>();
+    return new Map(allTickets.map(t => [t.id, t]));
+  }, [tooManyForById, ticketsById, allTickets]);
 
   // Filtered by UI controls
   const filteredTransfers = useMemo(() => {

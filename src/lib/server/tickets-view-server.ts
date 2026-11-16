@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { compareDocIds, inTicketScope, listScope, scopeKey } from '@/lib/ticket-scope';
 import {
@@ -43,7 +44,22 @@ export type TicketsViewResponse = {
   rows: string[];
   /** mode 'ids' only: every filtered+sorted ticket as [id, assigneeUserId | null]. */
   ids: Array<[string, string | null]> | null;
+  /**
+   * Fingerprint of the full filtered+sorted [id, assigneeUserId] list (what mode 'ids' returns).
+   * The page keeps that list for Previous / Next on the ticket page; with this it re-downloads
+   * the list only when it actually changed, instead of after every refresh of the page.
+   */
+  idsVersion: string;
 };
+
+const assigneeUserId = (t: Record<string, any>): string | null =>
+  (t.assignedTo && typeof t.assignedTo === 'object' && typeof t.assignedTo.userId === 'string') ? t.assignedTo.userId : null;
+
+function listFingerprint(sorted: Array<Record<string, any>>): string {
+  const parts: string[] = new Array(sorted.length);
+  for (let i = 0; i < sorted.length; i++) parts[i] = `${sorted[i].id}\u0001${assigneeUserId(sorted[i]) ?? ''}`;
+  return createHash('sha1').update(parts.join('\u0002')).digest('base64').slice(0, 20);
+}
 
 // Small reference collections the page also subscribes to (campus/school/division/grade
 // names for scope matching; departments only for "loaded" gating). Short TTL; a failed
@@ -120,7 +136,7 @@ export async function computeTicketsView(
 ): Promise<TicketsViewResponse> {
   const [{ docs, readTime }, ref] = await Promise.all([getTicketSummarySnapshot(db, req.minReadTime), loadReferenceData(db)]);
 
-  const scope = listScope(profile?.role, uid, profile?.departmentId);
+  const scope = listScope(profile?.role, uid, profile?.departmentId, profile?.campusIds);
   // The result depends on the viewer's role/department/campuses (and uid only when the
   // scope itself depends on it), never on the uid otherwise.
   const viewKey = JSON.stringify({
@@ -144,6 +160,7 @@ export async function computeTicketsView(
     const statusCounts = ticketsStatusCounts(filteredBase);
     const assigneeOptions = ticketsAssigneeOptions(roleFiltered);
     const sorted = sortTicketsForList(filteredBase, req.status);
+    const idsVersion = listFingerprint(sorted);
 
     if (req.mode === 'ids') {
       return {
@@ -153,7 +170,8 @@ export async function computeTicketsView(
         hasDuplicateTicketNumber: duplicate,
         assigneeOptions,
         rows: [],
-        ids: sorted.map(t => [t.id, (t.assignedTo && typeof t.assignedTo === 'object' && typeof t.assignedTo.userId === 'string') ? t.assignedTo.userId : null] as [string, string | null]),
+        ids: sorted.map(t => [t.id, assigneeUserId(t)] as [string, string | null]),
+        idsVersion,
       };
     }
 
@@ -176,6 +194,7 @@ export async function computeTicketsView(
       assigneeOptions,
       rows,
       ids: null,
+      idsVersion,
     };
   })();
   byKey.set(viewKey, pending);

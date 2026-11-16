@@ -1,6 +1,7 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentUpdated, onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
 import { mirrorTicketSummary as mirrorTicketSummaryDoc } from "./ticket-summary.js";
+import { generateUniqueTicketNumber } from "./ticket-number.js";
 import { defineSecret } from "firebase-functions/params";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import {
@@ -797,10 +798,29 @@ async function extractAndUploadEmailAttachments(
     return attachmentUrls;
 }
 
+/**
+ * Messages this function instance has already seen marked "completed".
+ *
+ * Every 2 minutes the sync lists the newest 25 inbox messages of every mailbox, and nearly
+ * all of them were handled long ago. Re-reading each one's marker costs one Firestore read
+ * per message, per mailbox, per run — about a million reads a day, around the clock.
+ * A "completed" marker is final (nothing ever changes it again), so it is safe to remember
+ * for the life of the instance. Anything else (no marker, "processing", "failed") is always
+ * read from Firestore, exactly as before.
+ */
+const COMPLETED_MESSAGES_MAX = 200000;
+const completedMessages = new Set<string>();
+
+function rememberCompletedMessage(key: string): void {
+    if (completedMessages.size >= COMPLETED_MESSAGES_MAX) completedMessages.clear();
+    completedMessages.add(key);
+}
+
 async function acquireMessageLock(
     processedRef: admin.firestore.DocumentReference,
     mailboxEmail: string,
-    messageId: string
+    messageId: string,
+    onAlreadyCompleted?: () => void
 ): Promise<boolean> {
     const existing = await processedRef.get();
 
@@ -820,6 +840,7 @@ async function acquireMessageLock(
             Date.now() - startedAtMillis > 10 * 60 * 1000;
 
         if (!isFailed && !isStaleProcessing) {
+            if (data?.status === "completed" && onAlreadyCompleted) onAlreadyCompleted();
             return false;
         }
 
@@ -977,13 +998,18 @@ const makeSyncEmails = (database: string) => onSchedule(
                                 .collection("tickets")
                                 .doc(ticketDocId);
 
+                            // Already seen as completed by this instance: nothing to read.
+                            const completedKey = `${database}|${processedRef.id}`;
+                            if (completedMessages.has(completedKey)) continue;
+
                             let locked = false;
 
                             try {
                                 locked = await acquireMessageLock(
                                     processedRef,
                                     mailbox.email,
-                                    msg.id
+                                    msg.id,
+                                    () => rememberCompletedMessage(completedKey)
                                 );
 
                                 if (!locked) {
@@ -1480,9 +1506,6 @@ const makeSyncEmails = (database: string) => onSchedule(
                                     );
                                 }
 
-                                const ticketNumber =
-                                    generateRandom4Digit();
-
                                 console.log(
                                     "ABOUT TO CREATE TICKET",
                                     {
@@ -1533,6 +1556,24 @@ const makeSyncEmails = (database: string) => onSchedule(
                                     );
 
                                     continue;
+                                }
+
+                                // Sequential number from the counter shared with the app
+                                // (system-counters/ticket_number), allocated only once we know
+                                // the ticket will be created. A random 4-digit number collided
+                                // with an existing ticket almost every time, so the app had to
+                                // renumber the ticket minutes later. If the counter cannot be
+                                // reached, keep the old behaviour so the email is never lost.
+                                let ticketNumber: number;
+                                try {
+                                    ticketNumber =
+                                        await generateUniqueTicketNumber(db);
+                                } catch (numberError: any) {
+                                    console.error(
+                                        `Ticket number counter unavailable for ${mailbox.email}; using a temporary number:`,
+                                        numberError
+                                    );
+                                    ticketNumber = generateRandom4Digit();
                                 }
 
                                 await ticketRef.create({

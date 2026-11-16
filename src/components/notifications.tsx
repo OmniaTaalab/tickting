@@ -10,15 +10,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useFirebase, useUser, useCollection, useMemoFirebase, setDocumentNonBlocking } from '@/firebase';
-import { collection, query, where, doc, limit } from 'firebase/firestore';
+import { collection, query, where, doc, limit, orderBy } from 'firebase/firestore';
 import type { TicketEvent } from '@/lib/types';
 import { formatDistanceToNow } from 'date-fns';
 import { arSA } from 'date-fns/locale';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from './ui/skeleton';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/hooks/use-language';
+import { latestNotificationsUnavailable, markLatestNotificationsUnavailable } from '@/lib/notifications-index';
 
 function NotificationList({ notifications, isLoading }: { notifications: TicketEvent[] | null, isLoading: boolean }) {
   const { firestore } = useFirebase();
@@ -89,28 +90,70 @@ function NotificationList({ notifications, isLoading }: { notifications: TicketE
 }
 
 
+const BELL_ITEMS = 10;
+const BELL_UNREAD_CAP = 10;
+
 export function NotificationBell() {
     const { firestore } = useFirebase();
     const { user } = useUser();
     const { t } = useLanguage();
 
-    // Fetch recent notifications for the user.
-    const notificationsQuery = useMemoFirebase(() => {
-        if (!firestore || !user) return null;
+    // The 10 NEWEST notifications — what the dropdown shows.
+    // This used to ask for "any 50" (no order), so a user with more than 50 notifications
+    // got an arbitrary 50 by document id and usually never saw a new one here.
+    // Needs the composite index ticket-events (recipient ASC, timestamp DESC). Until that
+    // index exists the query is rejected, and the previous query is used instead.
+    const [latestUnavailable, setLatestUnavailable] = useState(latestNotificationsUnavailable);
+    const latestQuery = useMemoFirebase(() => {
+        if (!firestore || !user || latestUnavailable) return null;
+        return query(
+          collection(firestore, 'ticket-events'),
+          where('recipient', '==', user.uid),
+          orderBy('timestamp', 'desc'),
+          limit(BELL_ITEMS)
+        );
+      }, [firestore, user, latestUnavailable]);
+    const latest = useCollection<TicketEvent>(latestQuery);
+    useEffect(() => {
+        if (latest.error) {
+            markLatestNotificationsUnavailable();
+            setLatestUnavailable(true);
+        }
+    }, [latest.error]);
+
+    // Previous query, only while the index above is missing.
+    const legacyQuery = useMemoFirebase(() => {
+        if (!firestore || !user || !latestUnavailable) return null;
         return query(
           collection(firestore, 'ticket-events'),
           where('recipient', '==', user.uid),
           limit(50)
         );
-      }, [firestore, user]);
+      }, [firestore, user, latestUnavailable]);
+    const legacy = useCollection<TicketEvent>(legacyQuery);
 
-    const { data: notifications, isLoading } = useCollection<TicketEvent>(notificationsQuery);
-    
+    const notifications = latestUnavailable ? legacy.data : latest.data;
+    const isLoading = latestUnavailable ? legacy.isLoading : latest.isLoading;
+
+    // The red badge shows 1-9 or "9+", so ten unread notifications are all it ever needs
+    // (some users have more than a thousand unread). No index needed for this one.
+    const unreadQuery = useMemoFirebase(() => {
+        if (!firestore || !user) return null;
+        return query(
+          collection(firestore, 'ticket-events'),
+          where('recipient', '==', user.uid),
+          where('read', '==', false),
+          limit(BELL_UNREAD_CAP)
+        );
+      }, [firestore, user]);
+    const unread = useCollection<TicketEvent>(unreadQuery);
+
     // Calculate the unread count
     const unreadCount = useMemo(() => {
+        if (unread.data) return unread.data.length;
         if (!notifications) return 0;
         return notifications.filter(n => !n.read).length;
-    }, [notifications]);
+    }, [unread.data, notifications]);
 
 
   return (

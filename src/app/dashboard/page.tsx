@@ -106,7 +106,7 @@ function DashboardPage() {
   // (src/lib/ticket-scope.ts). The scope needs the role, so this waits for the profile;
   // the skeleton already waits for it (isLoading includes isProfileLoading).
   const ticketScope = (firestore && user && userProfile)
-    ? listScope(userProfile.role, user.uid, userProfile.departmentId)
+    ? listScope(userProfile.role, user.uid, userProfile.departmentId, userProfile.campusIds)
     : null;
   // 'dashboard' projection: only the fields this page and its charts read (see
   // src/lib/ticket-projections.ts) — ~5x less data on the fast path, same results.

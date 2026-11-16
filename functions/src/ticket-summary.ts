@@ -124,6 +124,14 @@ export function buildTicketSummary(ticket: Record<string, unknown>): Record<stri
             summary.routingOptions = ticket.routingOptions; // keep raw: exact behaviour
         }
     }
+    // The list pages query summaries by campus ("on my campuses, or no campus": campusId in
+    // [...] / == null / == ''), and Firestore cannot match a field that is missing. Every
+    // ticket creator writes campusId (a string or null), so this never fires today; it only
+    // guarantees that a ticket ever saved without the field is still found as "no campus".
+    // null and a missing field behave identically in every list page.
+    if (!Object.prototype.hasOwnProperty.call(summary, "campusId")) {
+        summary.campusId = null;
+    }
     return summary;
 }
 
