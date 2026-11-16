@@ -143,6 +143,18 @@ async function loadTaxonomy(db: FirebaseFirestore.Firestore): Promise<Taxonomy> 
  * Missing or contradictory ticket attributes must NEVER widen access.
  */
 function agentCoversTicket(agent: ScopeAgent, ticket: ScopeTicket, taxonomy: Taxonomy): boolean {
+  const coarse = coarseScopeDecision(agent, ticket, taxonomy);
+  return coarse !== null ? coarse : detailedScopeMatch(agent, ticket, taxonomy);
+}
+
+/**
+ * First half of agentCoversTicket: everything that can be decided from the ticket's
+ * category, campus and mailbox alone. Returns the final answer, or null when the ticket's
+ * school / division / grade detail (detailedScopeMatch) has to decide.
+ * It must not read ticket.grades, ticket.allowedGrades or ticket.routingOptions: the Queue
+ * scan relies on that to skip downloading those large fields (see QUEUE_DETAIL_FIELDS).
+ */
+function coarseScopeDecision(agent: ScopeAgent, ticket: ScopeTicket, taxonomy: Taxonomy): boolean | null {
   const ticketMailbox = String(ticket.mailboxEmail || '').trim().toLowerCase();
   const mailboxRule = ticketMailbox ? taxonomy.mailboxes.get(ticketMailbox) : undefined;
 
@@ -196,6 +208,14 @@ function agentCoversTicket(agent: ScopeAgent, ticket: ScopeTicket, taxonomy: Tax
   // Campus-only mailbox (Admissions / Collection): no school, division or grade needed.
   if (mailboxRule?.scope === 'campus') return true;
 
+  return null;
+}
+
+/**
+ * Second half of agentCoversTicket: strict school / division / grade matching. Only valid
+ * after coarseScopeDecision returned null (category, mailbox and campus already checked).
+ */
+function detailedScopeMatch(agent: ScopeAgent, ticket: ScopeTicket, taxonomy: Taxonomy): boolean {
   const matches = (
     ids: unknown, names: unknown, targetId: unknown, targetName: unknown,
     catalog: Map<string, string[]>
@@ -467,6 +487,52 @@ export async function getRoundRobinAssignee(
     }
 }
 
+// ---- Queue scan: what is read, and what is remembered between passes -----------------------
+// Small fields read for every queued ticket on every pass.
+// !! If the Queue loop or coarseScopeDecision reads a new ticket field, add it here. !!
+const QUEUE_LIGHT_FIELDS = [
+  'createdAt', 'departmentId', 'ticketNumber', 'subject', 'campusId', 'campusName',
+  'pendingTransferRequestId', 'pendingLocalTransferRequestId',
+  'schoolId', 'schoolName', 'school', 'divisionId', 'divisionName', 'division',
+  'gradeId', 'gradeName', 'grade', 'mailboxEmail',
+];
+// Large fields, read only by detailedScopeMatch. !! Add any new field it reads here. !!
+const QUEUE_DETAIL_FIELDS = ['grades', 'allowedGrades', 'routingOptions'];
+const QUEUE_DETAIL_CHUNK = 250;
+const QUEUE_DETAIL_PARALLEL = 4;
+const MAX_SKIPPED_RETURNED = 100;
+
+type QueuedTicket = {
+  id: string;
+  /** Firestore update time of the document the data was read from. */
+  version: string;
+  data: FirebaseFirestore.DocumentData;
+  /** true once QUEUE_DETAIL_FIELDS are present in data (when the ticket has them). */
+  hasDetail: boolean;
+  /** The ticket left the Queue between the scan and the detail read. */
+  gone?: boolean;
+};
+
+const snapshotVersion = (snap: FirebaseFirestore.DocumentSnapshot): string =>
+  snap.updateTime ? `${snap.updateTime.seconds}.${snap.updateTime.nanoseconds}` : '';
+
+/**
+ * Per server instance: the large scope fields of queued tickets, keyed by ticket id and
+ * valid only for the stored version. It is a pure read cache: losing it (new instance,
+ * restart) only means the fields are read again. Identical values (the same mailbox routes
+ * on thousands of tickets) share one object; nothing mutates them.
+ */
+const queueDetailCache = new Map<string, { version: string; departmentId: string; detail: Record<string, unknown> }>();
+const internedDetailValues = new Map<string, unknown>();
+function internDetailValue(value: unknown): unknown {
+  const key = JSON.stringify(value);
+  if (key === undefined) return value;
+  if (internedDetailValues.has(key)) return internedDetailValues.get(key);
+  if (internedDetailValues.size >= 5000) internedDetailValues.clear();
+  internedDetailValues.set(key, value);
+  return value;
+}
+
 /**
  * Automatically assigns queued tickets (status === 'Queue') to available, logged-in agents
  * using fair round-robin distribution per department and campus/school/division/grade coverage.
@@ -489,30 +555,32 @@ export async function autoAssignQueuedTickets(options?: {
 
   try {
     // 1. Fetch tickets with status 'Queue'
-    let queryRef = db.collection('tickets').where('status', '==', 'Queue');
-    if (options?.departmentId) {
-      queryRef = queryRef.where('departmentId', '==', options.departmentId);
-    }
-
-    // PERF: project only the fields this function (and agentCoversTicket) reads, instead of
-    // downloading every queued ticket's full messages/attachments. A projection never filters
-    // documents (docs missing these fields are still returned). The assignment transaction
-    // below re-reads the FULL ticket before writing, so its re-check is unaffected.
-    // !! If you read a new ticket field in this loop or in agentCoversTicket, add it here. !!
-    const QUEUE_PROJECTION = [
-      'createdAt', 'departmentId', 'ticketNumber', 'subject', 'campusId', 'campusName',
-      'pendingTransferRequestId', 'pendingLocalTransferRequestId',
-      'schoolId', 'schoolName', 'school', 'divisionId', 'divisionName', 'division',
-      'gradeId', 'gradeName', 'grade', 'grades', 'allowedGrades', 'routingOptions', 'mailboxEmail',
-    ];
-    const queuedSnap = await queryRef.select(...QUEUE_PROJECTION).get();
-    let queuedDocs = queuedSnap.docs;
-
+    // PERF: the Queue can hold thousands of tickets nobody can take yet, and each carries a
+    // copy of its mailbox routes (routingOptions, up to ~15 KB). Downloading all of that on
+    // every pass took 6-30 s. So:
+    //   - one ticket asked for  -> read that one document;
+    //   - otherwise             -> read only the small fields, then load the large scope
+    //     fields just for tickets an available agent might cover, once per ticket version
+    //     (queueDetailCache). The assignment transaction below still re-reads the FULL ticket
+    //     and re-checks everything before writing, exactly as before.
+    let queued: QueuedTicket[];
     if (options?.ticketId) {
-      queuedDocs = queuedDocs.filter(d => d.id === options.ticketId);
+      const snap = await db.collection('tickets').doc(options.ticketId).get();
+      const data = snap.data();
+      const isQueued = Boolean(data) && data!.status === 'Queue' &&
+        (!options.departmentId || data!.departmentId === options.departmentId);
+      queued = isQueued ? [{ id: snap.id, version: snapshotVersion(snap), data: data!, hasDetail: true }] : [];
+    } else {
+      let queryRef = db.collection('tickets').where('status', '==', 'Queue');
+      if (options?.departmentId) {
+        queryRef = queryRef.where('departmentId', '==', options.departmentId);
+      }
+      // A projection never filters documents (docs missing these fields are still returned).
+      const queuedSnap = await queryRef.select(...QUEUE_LIGHT_FIELDS).get();
+      queued = queuedSnap.docs.map(d => ({ id: d.id, version: snapshotVersion(d), data: d.data(), hasDetail: false }));
     }
 
-    if (queuedDocs.length === 0) {
+    if (queued.length === 0) {
       return {
         success: true,
         assignedCount: 0,
@@ -527,16 +595,16 @@ export async function autoAssignQueuedTickets(options?: {
     // PERF: compute each sort key once instead of decoding both docs on every comparison.
     // Same key expression and stable sort => identical order. Guarded so keys are only
     // computed when the original comparator would have run.
-    if (queuedDocs.length > 1) {
+    if (queued.length > 1) {
       const createdMsById = new Map<string, number>();
-      for (const d of queuedDocs) {
-        const data = d.data();
-        createdMsById.set(d.id, data.createdAt?.toDate ? data.createdAt.toDate().getTime() : (new Date(data.createdAt || 0).getTime() || 0));
+      for (const q of queued) {
+        const data = q.data;
+        createdMsById.set(q.id, data.createdAt?.toDate ? data.createdAt.toDate().getTime() : (new Date(data.createdAt || 0).getTime() || 0));
       }
-      queuedDocs.sort((a, b) => createdMsById.get(a.id)! - createdMsById.get(b.id)!);
+      queued.sort((a, b) => createdMsById.get(a.id)! - createdMsById.get(b.id)!);
     }
 
-    const totalQueued = queuedDocs.length;
+    const totalQueued = queued.length;
     const assignments: QueuedTicketAssignment[] = [];
     const skippedTickets: Array<{ ticketId: string; ticketNumber?: number | string; subject?: string; reason: string }> = [];
 
@@ -616,10 +684,87 @@ export async function autoAssignQueuedTickets(options?: {
       return entry;
     }
 
+    // Load the large scope fields (grades, allowedGrades, routingOptions) only where the
+    // decision needs them: the ticket is not on hold, its category is inside working hours
+    // with someone available, and at least one of those agents passes the category /
+    // mailbox / campus checks. Tickets already loaded at their current version come from
+    // queueDetailCache (a ticket's version changes on every write to it, so a cached copy
+    // is never stale).
+    if (!options?.ticketId) {
+      const liveIds = new Set(queued.map(q => q.id));
+      for (const [id, entry] of queueDetailCache) {
+        if (!liveIds.has(id) && (!options?.departmentId || entry.departmentId === options.departmentId)) {
+          queueDetailCache.delete(id);
+        }
+      }
+
+      const passStartedAt = new Date();
+      const toLoad: QueuedTicket[] = [];
+      for (const q of queued) {
+        const deptId = q.data.departmentId;
+        if (!deptId || q.data.pendingLocalTransferRequestId || q.data.pendingTransferRequestId) continue;
+        const deptInfo = await getDeptInfo(deptId);
+        if (deptInfo.availableAgents.length === 0) continue;
+        if (!isWithinWorkingHours(deptInfo.workingHours, passStartedAt, activeHolidays)) continue;
+
+        const cached = queueDetailCache.get(q.id);
+        if (cached && cached.version === q.version) {
+          Object.assign(q.data, cached.detail);
+          q.hasDetail = true;
+          continue;
+        }
+        if (deptInfo.availableAgents.some(emp => coarseScopeDecision(emp, q.data as ScopeTicket, taxonomy) === null)) {
+          toLoad.push(q);
+        }
+      }
+
+      const detailMask = [...QUEUE_LIGHT_FIELDS, ...QUEUE_DETAIL_FIELDS, 'status'];
+      const chunks: QueuedTicket[][] = [];
+      for (let i = 0; i < toLoad.length; i += QUEUE_DETAIL_CHUNK) chunks.push(toLoad.slice(i, i + QUEUE_DETAIL_CHUNK));
+      for (let i = 0; i < chunks.length; i += QUEUE_DETAIL_PARALLEL) {
+        await Promise.all(chunks.slice(i, i + QUEUE_DETAIL_PARALLEL).map(async chunk => {
+          const snaps = await db.getAll(
+            ...chunk.map(q => db.collection('tickets').doc(q.id)),
+            { fieldMask: detailMask }
+          );
+          snaps.forEach((snap, index) => {
+            const q = chunk[index];
+            const data = snap.data();
+            // Left the Queue (or this category) since the scan: leave it for the next pass.
+            if (!data || data.status !== 'Queue' ||
+                (options?.departmentId && data.departmentId !== options.departmentId)) {
+              q.gone = true;
+              return;
+            }
+            const detail: Record<string, unknown> = {};
+            for (const field of QUEUE_DETAIL_FIELDS) {
+              if (data[field] === undefined) continue;
+              detail[field] = internDetailValue(data[field]);
+              data[field] = detail[field];
+            }
+            q.data = data;
+            q.version = snapshotVersion(snap);
+            q.hasDetail = true;
+            queueDetailCache.set(q.id, { version: q.version, departmentId: String(data.departmentId || ''), detail });
+          });
+        }));
+      }
+    }
+
     // Process queued tickets in FIFO sequence
-    for (const ticketDoc of queuedDocs) {
-      const ticket = ticketDoc.data() as Ticket;
-      const ticketId = ticketDoc.id;
+    for (const q of queued) {
+      const ticket = q.data as Ticket;
+      const ticketId = q.id;
+
+      if (q.gone) {
+        skippedTickets.push({
+          ticketId,
+          ticketNumber: ticket.ticketNumber,
+          subject: ticket.subject,
+          reason: 'Ticket changed while assigning; will retry on the next Queue pass',
+        });
+        continue;
+      }
 
       // Never auto-assign a ticket awaiting manager approval.
       if (
@@ -682,7 +827,25 @@ export async function autoAssignQueuedTickets(options?: {
       }
 
       // Filter agents covering the ticket's campus, school, division, and grade
-      const eligibleAgents = deptInfo.availableAgents.filter(emp => agentCoversTicket(emp, ticket as ScopeTicket, taxonomy));
+      // Same result as agentCoversTicket, split so a ticket whose large scope fields were not
+      // loaded is never judged on incomplete data.
+      let detailMissing = false;
+      const eligibleAgents = deptInfo.availableAgents.filter(emp => {
+        const coarse = coarseScopeDecision(emp, ticket as ScopeTicket, taxonomy);
+        if (coarse !== null) return coarse;
+        if (!q.hasDetail) { detailMissing = true; return false; }
+        return detailedScopeMatch(emp, ticket as ScopeTicket, taxonomy);
+      });
+
+      if (detailMissing) {
+        skippedTickets.push({
+          ticketId,
+          ticketNumber: ticket.ticketNumber,
+          subject: ticket.subject,
+          reason: 'Scope detail not loaded in this pass; will retry on the next Queue pass',
+        });
+        continue;
+      }
 
       if (eligibleAgents.length === 0) {
         skippedTickets.push({
@@ -807,7 +970,9 @@ export async function autoAssignQueuedTickets(options?: {
       assignedCount: assignments.length,
       totalQueued,
       assignments,
-      skippedTickets,
+      // No caller reads the skipped list; returning thousands of rows to the browser on
+      // every pass only costs time, so it is capped.
+      skippedTickets: skippedTickets.slice(0, MAX_SKIPPED_RETURNED),
       message: `Successfully auto-assigned ${assignments.length} of ${totalQueued} queued tickets.`,
     };
   } catch (error: any) {
