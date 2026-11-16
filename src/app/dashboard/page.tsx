@@ -17,7 +17,8 @@ import { HolidayBanner } from '@/components/dashboard/holiday-banner';
 import { UpcomingHolidaysCard } from '@/components/dashboard/upcoming-holidays-card';
 import { useCollection, useDoc, useFirebase, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, doc, Timestamp } from 'firebase/firestore';
-import { useTicketsList } from '@/hooks/use-tickets-list';
+import { useTicketsList, useTicketFlags } from '@/hooks/use-tickets-list';
+import { useTicketsPolled } from '@/hooks/use-tickets-polled';
 import { listScope } from '@/lib/ticket-scope';
 import type { Ticket as TicketType, UserProfile, SLASettings, Department, TicketChannel } from '@/lib/types';
 import { DEFAULT_SLA_SETTINGS } from '@/lib/types';
@@ -73,6 +74,9 @@ function SummaryCard({ title, value, footer, icon, iconBg, iconColor }: SummaryC
   );
 }
 
+/** How often the dashboard asks the server for its rows again (tab visible). */
+const DASHBOARD_REFRESH_MS = 120_000;
+
 function DashboardPage() {
   const { firestore } = useFirebase();
   const { user } = useUser();
@@ -110,7 +114,19 @@ function DashboardPage() {
     : null;
   // 'dashboard' projection: only the fields this page and its charts read (see
   // src/lib/ticket-projections.ts) — ~5x less data on the fast path, same results.
-  const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<TicketType>(ticketScope, { keepAlive: true, projection: 'dashboard' });
+  // PERF/COST: with server-computed lists switched on for this viewer (the same switch as the
+  // paged tickets list), the rows come from the server's in-memory copy as ONE compressed
+  // response — only the fields this page reads — and are asked for again every 2 minutes
+  // while the tab is visible. Otherwise (switch off, or that request failing) a Firestore
+  // listener streams every one of those tickets to the browser, as before. Same rows either
+  // way; everything below is unchanged.
+  const dashboardFlags = useTicketFlags();
+  const serverRows = !!(dashboardFlags?.enabled && user && (dashboardFlags.pagedTickets || dashboardFlags.pagedTicketsUids.includes(user.uid)));
+  const polledTickets = useTicketsPolled<TicketType>(serverRows ? ticketScope : null, 'dashboard', DASHBOARD_REFRESH_MS);
+  const usePolledTickets = serverRows && !polledTickets.failed;
+  const listenedTickets = useTicketsList<TicketType>(usePolledTickets ? null : ticketScope, { keepAlive: true, projection: 'dashboard' });
+  const rawTickets = usePolledTickets ? polledTickets.data : listenedTickets.data;
+  const areTicketsLoading = usePolledTickets ? polledTickets.data === null : listenedTickets.isLoading;
 
   const roleFilteredTickets = useMemo(() => {
     if (!rawTickets || !userProfile || !user) return null;

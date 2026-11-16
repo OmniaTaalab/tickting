@@ -408,8 +408,9 @@ function TicketsContent() {
 
   // PAGED MODE (settings/ticketSummaries.pagedTickets / pagedTicketsUids): the server computes
   // this view with the same code (src/lib/tickets-view.ts) and returns only the current page.
-  // Not used while the SLA filter is active (it depends on the browser's time zone), and any
-  // failure falls back to the full-load path below for the rest of this page's lifetime.
+  // The SLA filter is applied there too, for this browser's time zone (the working-hours
+  // arithmetic depends on it; see src/lib/working-hours-zoned.ts). Any failure falls back to
+  // the full-load path below for the rest of this page's lifetime.
   const flags = useTicketFlags();
   const pagedAllowed = !!(flags?.enabled && user && (flags.pagedTickets || flags.pagedTicketsUids.includes(user.uid)));
 
@@ -433,7 +434,8 @@ function TicketsContent() {
   }, [liveTickets]);
 
   const view = useTicketsView<Ticket>({
-    enabled: pagedAllowed && filters.sla === 'all' && ticketScope !== null,
+    enabled: pagedAllowed && ticketScope !== null,
+    sla: filters.sla,
     filters: viewFilters,
     status: filters.status,
     page: currentPage,
@@ -441,7 +443,7 @@ function TicketsContent() {
     profileKey: userProfile ? `${userProfile.role}|${userProfile.departmentId}|${(userProfile.campusIds || []).join(',')}` : null,
     liveSignal,
   });
-  const pagedMode = pagedAllowed && filters.sla === 'all' && !view.failed;
+  const pagedMode = pagedAllowed && !view.failed;
 
   const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<Ticket>(pagedMode ? null : ticketScope, { keepAlive: true });
 

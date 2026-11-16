@@ -38,7 +38,9 @@ const EMPTY: TicketsPolledState<any> = { data: null, failed: false };
 
 export function useTicketsPolled<T = any>(
   scope: TicketScope | null,
-  projection: TicketProjection
+  projection: TicketProjection,
+  /** How often to ask again while the tab is visible (default POLL_INTERVAL_MS). */
+  intervalMs: number = POLL_INTERVAL_MS
 ): TicketsPolledState<T> {
   const auth = useAuth();
   const key = scope ? `${scopeKey(scope)}|${projection}` : null;
@@ -113,7 +115,7 @@ export function useTicketsPolled<T = any>(
     const isOnline = () => typeof navigator === 'undefined' || navigator.onLine !== false;
     const interval = setInterval(() => {
       if (isVisible() && isOnline()) load();
-    }, POLL_INTERVAL_MS);
+    }, intervalMs);
     const onWake = () => {
       if (isVisible() && isOnline() && Date.now() - lastDoneAt > WAKE_MIN_GAP_MS) load();
     };
@@ -140,7 +142,7 @@ export function useTicketsPolled<T = any>(
       const running = inFlight as AbortController | null;
       if (running) running.abort();
     };
-  }, [auth, key, projection]);
+  }, [auth, key, projection, intervalMs]);
 
   // Rows of another scope (the key just changed) are never returned.
   if (!key || state.key !== key) return EMPTY as TicketsPolledState<T>;

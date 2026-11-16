@@ -57,7 +57,7 @@ export async function POST(req: Request) {
       `{"v":1,"readTime":[${view.readTime[0]},${view.readTime[1]}],"totalItems":${view.totalItems},` +
       `"statusCounts":${JSON.stringify(view.statusCounts)},"hasDuplicateTicketNumber":${view.hasDuplicateTicketNumber},` +
       `"assigneeOptions":${JSON.stringify(view.assigneeOptions)},"ids":${view.ids ? JSON.stringify(view.ids) : 'null'},` +
-      `"idsVersion":${JSON.stringify(view.idsVersion)},` +
+      `"idsVersion":${JSON.stringify(view.idsVersion)},"sla":${JSON.stringify(view.sla)},` +
       `"rows":[${view.rows.join(',')}]}`;
     const gz = await gzipAsync(json, { level: 4 });
     // Every open tickets page asks for its page every 20 s; logging each call would be tens

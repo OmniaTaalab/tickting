@@ -58,7 +58,22 @@ export type TicketsViewParams = {
   /** Changes when the viewer's role/department could have changed (the server re-reads them). */
   profileKey: string | null;
   liveSignal?: TicketsViewLiveSignal | null;
+  /**
+   * The page's SLA filter ('all' | 'breached' | 'at-risk'). The server applies it for this
+   * browser's time zone (sent with each request), so the SLA-filtered list is paged too.
+   */
+  sla?: string;
 };
+
+/** The browser's IANA time zone name, or null when it cannot be read. */
+function browserTimeZone(): string | null {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === 'string' && zone.length > 0 ? zone : null;
+  } catch {
+    return null;
+  }
+}
 
 export type TicketsViewState<T> = {
   rows: T[] | null;
@@ -86,6 +101,8 @@ type Payload = {
   rows: [string, unknown][];
   ids?: Array<[string, string | null]> | null;
   idsVersion?: string;
+  /** The SLA filter the server applied (absent on a server that does not know the filter). */
+  sla?: string;
 };
 
 const INITIAL: TicketsViewState<any> = {
@@ -126,11 +143,12 @@ export function useTicketsView<T = any>(params: TicketsViewParams): TicketsViewS
 } {
   const auth = useAuth();
   const { enabled, filters, status, page, pageSize, profileKey } = params;
+  const sla = params.sla && params.sla !== 'all' ? params.sla : 'all';
   const liveKey = params.liveSignal?.key ?? null;
   const liveMinReadTime = params.liveSignal?.minReadTime ?? null;
   const [state, setState] = useState<TicketsViewState<T>>(INITIAL);
 
-  const requestKey = enabled ? JSON.stringify({ filters, status, page, pageSize, profileKey }) : null;
+  const requestKey = enabled ? JSON.stringify({ filters, status, page, pageSize, profileKey, sla }) : null;
 
   // Newest commit time observed (responses + live signal): the freshness floor.
   const minReadTime = useRef<Timestamp | null>(null);
@@ -192,6 +210,12 @@ export function useTicketsView<T = any>(params: TicketsViewParams): TicketsViewS
       if (payload?.v !== 1 || !Array.isArray(payload.rows) || !Array.isArray(payload.readTime)) {
         throw new Error('bad payload');
       }
+      // An SLA filter was asked for: the answer must say it was applied. A server from before
+      // this feature ignores the field and would return the unfiltered list.
+      const askedSla = (body as { sla?: string }).sla;
+      if (askedSla && askedSla !== 'all' && payload.sla !== askedSla) {
+        throw new Error('server did not apply the SLA filter');
+      }
       raiseMin(new Timestamp(payload.readTime[0], payload.readTime[1]));
       return payload;
     },
@@ -210,7 +234,7 @@ export function useTicketsView<T = any>(params: TicketsViewParams): TicketsViewS
       return;
     }
     pendingRef.current = false;
-    const { filters: f, status: s, page: p, pageSize: ps } = JSON.parse(key);
+    const { filters: f, status: s, page: p, pageSize: ps, sla: keySla } = JSON.parse(key);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     inFlightRef.current = ctrl;
@@ -218,7 +242,7 @@ export function useTicketsView<T = any>(params: TicketsViewParams): TicketsViewS
     if (loadedKeyRef.current !== key) {
       setState(prev => (prev.isFetching ? prev : { ...prev, isFetching: true }));
     }
-    post({ filters: f, status: s, page: p, pageSize: ps, mode: 'page' }, ctrl.signal)
+    post({ filters: f, status: s, page: p, pageSize: ps, mode: 'page', sla: keySla, timeZone: keySla !== 'all' ? browserTimeZone() : null }, ctrl.signal)
       .then(payload => {
         if (droppedRef.current.has(ctrl) || disposedRef.current || keyRef.current !== key) return; // superseded
         failuresRef.current = 0;
@@ -357,7 +381,7 @@ export function useTicketsView<T = any>(params: TicketsViewParams): TicketsViewS
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 60_000);
     try {
-      const payload = await post({ filters, status, page: 1, pageSize: 50, mode: 'all' }, ctrl.signal);
+      const payload = await post({ filters, status, page: 1, pageSize: 50, mode: 'all', sla, timeZone: sla !== 'all' ? browserTimeZone() : null }, ctrl.signal);
       return decodeRows<T>(payload.rows);
     } catch (err) {
       fail(err);
@@ -365,13 +389,13 @@ export function useTicketsView<T = any>(params: TicketsViewParams): TicketsViewS
     } finally {
       clearTimeout(timer);
     }
-  }, [post, fail, filters, status]);
+  }, [post, fail, filters, status, sla]);
 
   const fetchOrderedIds = useCallback(async (): Promise<{ ids: Array<[string, string | null]>; version: string | null }> => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30_000);
     try {
-      const payload = await post({ filters, status, page: 1, pageSize: 50, mode: 'ids' }, ctrl.signal);
+      const payload = await post({ filters, status, page: 1, pageSize: 50, mode: 'ids', sla, timeZone: sla !== 'all' ? browserTimeZone() : null }, ctrl.signal);
       return {
         ids: Array.isArray(payload.ids) ? payload.ids : [],
         version: typeof payload.idsVersion === 'string' ? payload.idsVersion : null,
@@ -379,7 +403,7 @@ export function useTicketsView<T = any>(params: TicketsViewParams): TicketsViewS
     } finally {
       clearTimeout(timer);
     }
-  }, [post, filters, status]);
+  }, [post, filters, status, sla]);
 
   const refresh = useCallback(() => pumpRef.current(), []);
 
