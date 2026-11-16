@@ -9,11 +9,12 @@ runConfig:
   maxInstances: 20
   # 512MiB (the default) was OOM-killed ~400 times in 7 days (Cloud Run logs,
   # "Memory limit of 512 MiB exceeded"), restarting the only instance every few
-  # minutes. Raised to 2GiB on 2026-11-02 and to 4GiB in the Cloud Run console on
-  # 2026-11-16 (each instance now keeps an in-memory copy of the ticket summaries for
-  # the paged lists). This line must match the console value: every App Hosting
-  # rollout applies what is written here.
-  memoryMiB: 4096
+  # minutes. Raised to 2GiB on 2026-11-02. Each instance now also keeps an in-memory
+  # copy of the ticket summaries for the paged lists, so 3GiB. Every App Hosting rollout
+  # applies what is written here (a value set only in the Cloud Run console is lost on
+  # the next push). App Hosting requires cpu: 2 for memoryMiB >= 4096 — a rollout with
+  # 4096 and cpu: 1 fails at the very first build step.
+  memoryMiB: 3072
   cpu: 1
 
 env:
