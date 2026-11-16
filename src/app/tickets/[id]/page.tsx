@@ -38,7 +38,7 @@ import {
     Share2,
     ArrowRightLeft
 } from 'lucide-react';
-import type { TicketMessage, Ticket, TicketStatus, UserProfile, Department, SLASettings, School, Division, Grade, Campus } from '@/lib/types';
+import type { TicketMessage, Ticket, TicketStatus, UserProfile, Department, SLASettings, School, Division, Campus } from '@/lib/types';
 import { DEFAULT_SLA_SETTINGS } from '@/lib/types';
 import { useDoc, useFirebase, useMemoFirebase, useUser as useAuthUser, setDocumentNonBlocking, useCollection } from '@/firebase';
 import { doc, serverTimestamp, collection, query, where, orderBy, Timestamp } from 'firebase/firestore';
@@ -430,36 +430,61 @@ function LocalTransferDialog({ isOpen, onClose, ticket }: { isOpen: boolean; onC
     const { firestore } = useFirebase();
     const { user } = useAuthUser();
     const { toast } = useToast();
+    const [campusId, setCampusId] = useState('');
     const [schoolId, setSchoolId] = useState('');
     const [divisionId, setDivisionId] = useState('');
-    const [gradeId, setGradeId] = useState('');
     const [isSending, setIsSending] = useState(false);
+
+    const campusesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'campuses')) : null, [firestore]);
     const schoolsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'schools')) : null, [firestore]);
     const divisionsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'divisions')) : null, [firestore]);
-    const gradesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'grades')) : null, [firestore]);
-    const campusesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'campuses')) : null, [firestore]);
+    const { data: campuses } = useCollection<Campus>(campusesQuery);
     const { data: schools } = useCollection<School>(schoolsQuery);
     const { data: divisions } = useCollection<Division>(divisionsQuery);
-    const { data: grades } = useCollection<Grade>(gradesQuery);
-    const { data: campuses } = useCollection<Campus>(campusesQuery);
-    const campus = campuses?.find(c => c.id === ticket.campusId);
-    const configs = campus?.schoolConfigs || [];
-    const availableSchools = !configs.length ? (schools || []) : (schools || []).filter(s => configs.some(c => c.schoolId === s.id));
-    const schoolConfig = configs.find(c => c.schoolId === schoolId);
-    const availableGrades = !configs.length ? (grades || []) : (grades || []).filter(g => schoolConfig?.gradeIds?.includes(g.id));
+
+    const selectedCampus = campuses?.find(c => c.id === campusId);
+    const availableSchools = useMemo(() => {
+        if (!selectedCampus) return [];
+        const configs = selectedCampus.schoolConfigs || [];
+        if (configs.length) {
+            const ids = new Set(configs.map(c => c.schoolId));
+            return (schools || []).filter(s => ids.has(s.id));
+        }
+        // Legacy fallback only when a School explicitly points to this Campus.
+        return (schools || []).filter(s => {
+            const record = s as School & { campusId?: string; campusIds?: string[] };
+            return record.campusId === campusId || record.campusIds?.includes(campusId);
+        });
+    }, [selectedCampus, schools, campusId]);
+
+    const selectedSchool = availableSchools.find(s => s.id === schoolId);
+    const availableDivisions = useMemo(() => {
+        if (!selectedSchool) return [];
+        // Support the two common Firestore relationship shapes, without showing unrelated divisions.
+        const school = selectedSchool as School & { divisionIds?: string[] };
+        return (divisions || []).filter(d => {
+            const division = d as Division & { schoolId?: string; schoolIds?: string[] };
+            return division.schoolId === schoolId ||
+                division.schoolIds?.includes(schoolId) ||
+                school.divisionIds?.includes(d.id);
+        });
+    }, [selectedSchool, divisions, schoolId]);
+
     useEffect(() => {
-        if (isOpen) { setSchoolId(''); setDivisionId(''); setGradeId(''); }
+        if (isOpen) { setCampusId(''); setSchoolId(''); setDivisionId(''); }
     }, [isOpen]);
+
     const submit = async () => {
-        if (!user || !schoolId || !divisionId || !gradeId || isSending) return;
+        if (!user || !campusId || !schoolId || !divisionId || isSending) return;
+        if (!availableSchools.some(s => s.id === schoolId) || !availableDivisions.some(d => d.id === divisionId)) return;
         setIsSending(true);
         try {
             const token = await user.getIdToken();
             const formData = new FormData();
             formData.set('ticketId', ticket.id);
+            formData.set('campusId', campusId);
             formData.set('schoolId', schoolId);
             formData.set('divisionId', divisionId);
-            formData.set('gradeId', gradeId);
             formData.set('idToken', token);
             const result = await requestLocalTransferAction({ success: false }, formData);
             toast(result.success
@@ -470,38 +495,39 @@ function LocalTransferDialog({ isOpen, onClose, ticket }: { isOpen: boolean; onC
             toast({ variant: 'destructive', title: 'Error', description: error?.message || 'Failed to send request.' });
         } finally { setIsSending(false); }
     };
+
     return (
         <Dialog open={isOpen} onOpenChange={open => { if (!open && !isSending) onClose(); }}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                     <DialogTitle>Local Transfer</DialogTitle>
-                    <DialogDescription>Choose School, Division and Grade. A manager must approve the request before the change takes effect.</DialogDescription>
+                    <DialogDescription>Choose Campus, School and Division. A manager must approve the request before the change takes effect.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 pt-4">
                     <div className="space-y-2">
+                        <Label>Campus</Label>
+                        <Select value={campusId} onValueChange={val => { setCampusId(val); setSchoolId(''); setDivisionId(''); }} disabled={isSending}>
+                            <SelectTrigger><SelectValue placeholder="Select Campus" /></SelectTrigger>
+                            <SelectContent>{campuses?.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
                         <Label>School</Label>
-                        <Select value={schoolId} onValueChange={val => { setSchoolId(val); setDivisionId(''); setGradeId(''); }} disabled={isSending}>
-                            <SelectTrigger><SelectValue placeholder="Select School" /></SelectTrigger>
+                        <Select value={schoolId} onValueChange={val => { setSchoolId(val); setDivisionId(''); }} disabled={isSending || !campusId}>
+                            <SelectTrigger><SelectValue placeholder={campusId ? 'Select School' : 'Select Campus First'} /></SelectTrigger>
                             <SelectContent>{availableSchools.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
                         </Select>
                     </div>
                     <div className="space-y-2">
                         <Label>Division</Label>
-                        <Select value={divisionId} onValueChange={val => { setDivisionId(val); setGradeId(''); }} disabled={isSending}>
-                            <SelectTrigger><SelectValue placeholder="Select Division" /></SelectTrigger>
-                            <SelectContent>{divisions?.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
-                        </Select>
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Grade</Label>
-                        <Select value={gradeId} onValueChange={setGradeId} disabled={isSending || !schoolId}>
-                            <SelectTrigger><SelectValue placeholder="Select Grade" /></SelectTrigger>
-                            <SelectContent>{availableGrades.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}</SelectContent>
+                        <Select value={divisionId} onValueChange={setDivisionId} disabled={isSending || !schoolId}>
+                            <SelectTrigger><SelectValue placeholder={schoolId ? 'Select Division' : 'Select School First'} /></SelectTrigger>
+                            <SelectContent>{availableDivisions.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
                         </Select>
                     </div>
                     <DialogFooter>
                         <Button type="button" variant="ghost" onClick={onClose} disabled={isSending}>Cancel</Button>
-                        <Button type="button" className="bg-[#1e3a8a] text-white" onClick={submit} disabled={isSending || !user || !schoolId || !divisionId || !gradeId || !!ticket.pendingLocalTransferRequestId || !!ticket.pendingTransferRequestId}>
+                        <Button type="button" className="bg-[#1e3a8a] text-white" onClick={submit} disabled={isSending || !user || !campusId || !schoolId || !divisionId || !!ticket.pendingLocalTransferRequestId || !!ticket.pendingTransferRequestId}>
                             {isSending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send Request
                         </Button>
                     </DialogFooter>
@@ -1137,7 +1163,7 @@ if (ticket.status === 'Duplicate' || String(ticket.status) === 'Ignored') return
               <div className="flex flex-wrap items-center justify-end gap-2">
                   <TicketStatusBadge status={ticket.status} />
                             {ticket.status === 'Queue' && ticket.pendingLocalTransferRequestId && ticket.pendingLocalTransferScope && (
-                                <span className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">Waiting for Manager Approval: {ticket.pendingLocalTransferScope.schoolName} / {ticket.pendingLocalTransferScope.divisionName} / {ticket.pendingLocalTransferScope.gradeName}</span>
+                                <span className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">Waiting for Manager Approval: {ticket.pendingLocalTransferScope.schoolName} / {ticket.pendingLocalTransferScope.divisionName}</span>
                             )}
                   {ticket.status === 'Queue' && Boolean((ticket as Ticket & {
                     pendingTransferRequestId?: string | null;

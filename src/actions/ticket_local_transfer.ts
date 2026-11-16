@@ -10,9 +10,9 @@ import type { UserProfile } from '@/lib/types';
 
 const RequestSchema = z.object({
   ticketId: z.string().min(1),
+  campusId: z.string().min(1),
   schoolId: z.string().min(1),
   divisionId: z.string().min(1),
-  gradeId: z.string().min(1),
   idToken: z.string().min(1),
 });
 export type LocalTransferActionState = { success: boolean; message?: string };
@@ -40,11 +40,12 @@ async function authenticatedUser(idToken: string) {
   return { uid: decoded.uid, profile };
 }
 
-function canManage(profile: UserProfile, ticket: FirebaseFirestore.DocumentData): boolean {
+function canApproveTarget(profile: UserProfile, departmentId: string, campusId: string): boolean {
   if (profile.role === 'Admin') return true;
-  if (profile.role !== 'Manager' || profile.departmentId !== ticket.departmentId) return false;
-  return !!ticket.campusId && Array.isArray(profile.campusIds) && profile.campusIds.includes(ticket.campusId);
+  return profile.role === 'Manager' && profile.departmentId === departmentId &&
+    Array.isArray(profile.campusIds) && profile.campusIds.includes(campusId);
 }
+
 function refresh(ticketId: string) {
   revalidatePath('/requests');
   revalidatePath('/tickets');
@@ -57,23 +58,21 @@ export async function requestLocalTransferAction(
   data: FormData
 ): Promise<LocalTransferActionState> {
   const parsed = RequestSchema.safeParse(Object.fromEntries(data));
-  if (!parsed.success) return { success: false, message: 'Choose School, Division and Grade.' };
-  const { ticketId, schoolId, divisionId, gradeId, idToken } = parsed.data;
+  if (!parsed.success) return { success: false, message: 'Choose Campus, School and Division.' };
+  const { ticketId, campusId, schoolId, divisionId, idToken } = parsed.data;
   try {
     const { uid, profile } = await authenticatedUser(idToken);
-   const db = adminDb;
+    const db = adminDb;
+    if (!db) throw new Error('Firebase Admin is not initialized.');
 
-if (!db) {
-  throw new Error('Firebase Admin is not initialized.');
-}
-
-const ticketRef = db.collection('tickets').doc(ticketId);
-    const [ticketDoc, schoolDoc, divisionDoc, gradeDoc] = await Promise.all([
-      ticketRef.get(), db.collection('schools').doc(schoolId).get(),
-      db.collection('divisions').doc(divisionId).get(), db.collection('grades').doc(gradeId).get(),
+    const ticketRef = db.collection('tickets').doc(ticketId);
+    const [ticketDoc, campusDoc, schoolDoc, divisionDoc] = await Promise.all([
+      ticketRef.get(), db.collection('campuses').doc(campusId).get(),
+      db.collection('schools').doc(schoolId).get(), db.collection('divisions').doc(divisionId).get(),
     ]);
     if (!ticketDoc.exists) throw new Error('Ticket not found.');
-    if (!schoolDoc.exists || !divisionDoc.exists || !gradeDoc.exists) throw new Error('Invalid School / Division / Grade.');
+    if (!campusDoc.exists || !schoolDoc.exists || !divisionDoc.exists)
+      throw new Error('Invalid Campus / School / Division.');
     const ticket = ticketDoc.data()!;
     if (profile.role !== 'Admin' && profile.departmentId !== ticket.departmentId)
       throw new Error('You cannot request a transfer for another category.');
@@ -84,38 +83,42 @@ const ticketRef = db.collection('tickets').doc(ticketId);
       throw new Error('This ticket already has a pending transfer request.');
     if (['Closed', 'Resolved', 'Duplicate', 'Ignored'].includes(ticket.status))
       throw new Error('This ticket cannot be transferred in its current status.');
-    if (ticket.schoolId === schoolId && ticket.divisionId === divisionId && ticket.gradeId === gradeId)
+    if (ticket.campusId === campusId && ticket.schoolId === schoolId && ticket.divisionId === divisionId)
       throw new Error('The requested scope is already selected.');
 
-    // If the current campus explicitly configures schools and grades, honor that configuration.
-    if (ticket.campusId) {
-      const campusDoc = await db.collection('campuses').doc(ticket.campusId).get();
-      if (!campusDoc.exists) throw new Error('Ticket campus no longer exists.');
-      const configs = campusDoc.data()?.schoolConfigs;
-      if (Array.isArray(configs) && configs.length) {
-        const selected = configs.find((c: any) => c.schoolId === schoolId);
-        if (!selected || !Array.isArray(selected.gradeIds) || !selected.gradeIds.includes(gradeId))
-          throw new Error('Selected school/grade is not available in the ticket campus.');
-      }
-    }
-    const scope: { schoolId: string; schoolName: string; divisionId: string; divisionName: string; gradeId: string; gradeName: string } = {
-      schoolId, schoolName: String(schoolDoc.data()?.name || ''),
-      divisionId, divisionName: String(divisionDoc.data()?.name || ''),
-      gradeId, gradeName: String(gradeDoc.data()?.name || ''),
+    const campus = campusDoc.data()!;
+    const school = schoolDoc.data()!;
+    const division = divisionDoc.data()!;
+    const configs = campus.schoolConfigs;
+    const belongsToCampus = Array.isArray(configs) && configs.length
+      ? configs.some((c: any) => c.schoolId === schoolId)
+      : school.campusId === campusId || (Array.isArray(school.campusIds) && school.campusIds.includes(campusId));
+    if (!belongsToCampus) throw new Error('Selected School is not linked to the selected Campus.');
+
+    const belongsToSchool = division.schoolId === schoolId ||
+      (Array.isArray(division.schoolIds) && division.schoolIds.includes(schoolId)) ||
+      (Array.isArray(school.divisionIds) && school.divisionIds.includes(divisionId));
+    if (!belongsToSchool) throw new Error('Selected Division is not linked to the selected School.');
+
+    const scope = {
+      campusId, campusName: String(campus.name || ''),
+      schoolId, schoolName: String(school.name || ''),
+      divisionId, divisionName: String(division.name || ''),
     };
-    if (!scope.schoolName || !scope.divisionName || !scope.gradeName)
+    if (!scope.campusName || !scope.schoolName || !scope.divisionName)
       throw new Error('One or more choices have no name.');
-    // Division is intentionally NOT restricted by school.
+
     const managers = await db.collection('users')
       .where('departmentId', '==', ticket.departmentId).where('role', '==', 'Manager').get();
     const admins = await db.collection('users').where('role', '==', 'Admin').get();
     const recipients = new Set<string>();
     managers.docs.forEach(d => {
-      if (canManage(d.data() as UserProfile, ticket)) recipients.add(d.id);
+      if (canApproveTarget(d.data() as UserProfile, ticket.departmentId, campusId)) recipients.add(d.id);
     });
     admins.docs.forEach(d => recipients.add(d.id));
     if (!recipients.size) throw new Error('No eligible manager or admin found.');
     if (recipients.size > 450) throw new Error('Too many approvers.');
+
     const requestRef = db.collection('ticket-local-transfer-requests').doc();
     const requestId = requestRef.id;
     const metadata = {
@@ -125,7 +128,7 @@ const ticketRef = db.collection('tickets').doc(ticketId);
       fromDepartmentName: ticket.departmentName || '',
       toDepartmentId: ticket.departmentId,
       toDepartmentName: ticket.departmentName || '',
-      campusId: ticket.campusId || null,
+      campusId,
       localTransferScope: scope,
     };
     await db.runTransaction(async tx => {
@@ -134,7 +137,8 @@ const ticketRef = db.collection('tickets').doc(ticketId);
       const current = currentDoc.data()!;
       if (current.pendingTransferRequestId || current.pendingLocalTransferRequestId)
         throw new Error('Another transfer is already pending.');
-      if (current.departmentId !== ticket.departmentId || current.campusId !== ticket.campusId)
+      if (current.departmentId !== ticket.departmentId || current.campusId !== ticket.campusId ||
+          current.schoolId !== ticket.schoolId || current.divisionId !== ticket.divisionId)
         throw new Error('Ticket was changed. Refresh and retry.');
       if (['Closed', 'Resolved', 'Duplicate', 'Ignored'].includes(current.status))
         throw new Error('Ticket is no longer eligible for transfer.');
@@ -151,7 +155,7 @@ const ticketRef = db.collection('tickets').doc(ticketId);
         tx.set(db.collection('ticket-events').doc(), {
           ticketId, requestId, eventType: 'TICKET_LOCAL_TRANSFER_REQUESTED',
           title: 'Local Transfer Requested',
-          message: `${profile.name || 'Staff'} requested Local Transfer to ${scope.schoolName} / ${scope.divisionName} / ${scope.gradeName}.`,
+          message: `${profile.name || 'Staff'} requested Local Transfer to ${scope.campusName} / ${scope.schoolName} / ${scope.divisionName}.`,
           recipient, timestamp: FieldValue.serverTimestamp(), read: false,
           status: 'pending', requestMetadata: metadata,
         });
@@ -195,18 +199,18 @@ const eventDoc = await db.collection('ticket-events').doc(eventId).get();
     const requestRef = db.collection('ticket-local-transfer-requests').doc(requestId);
     const eventsSnap = await db.collection('ticket-events').where('requestId', '==', requestId).get();
     const currentTicketSnap = await ticketRef.get();
-    if (!currentTicketSnap.exists || !canManage(profile, currentTicketSnap.data()!))
-      throw new Error('You cannot approve requests for this ticket category and campus.');
+    if (!currentTicketSnap.exists) throw new Error('Ticket not found.');
     await db.runTransaction(async tx => {
       const [ticketDoc, requestDoc] = await Promise.all([tx.get(ticketRef), tx.get(requestRef)]);
       const ticket = ticketDoc.data();
       const request = requestDoc.data();
       if (!ticket || !request || request.status !== 'pending' || ticket.pendingLocalTransferRequestId !== requestId)
         throw new Error('Request already processed or no longer pending.');
-      if (!canManage(profile, ticket)) throw new Error('No longer authorized.');
       const scope = request.requestedScope;
-      if (!scope?.schoolId || !scope?.divisionId || !scope?.gradeId)
+      if (!scope?.campusId || !scope?.schoolId || !scope?.divisionId)
         throw new Error('Request has invalid scope.');
+      if (!canApproveTarget(profile, ticket.departmentId, scope.campusId))
+        throw new Error('You are not authorized to approve this destination campus.');
       tx.update(requestRef, {
         status: decision, processedBy: { userId: uid, name: profile.name || 'Manager' },
         updatedAt: FieldValue.serverTimestamp(), processedAt: FieldValue.serverTimestamp(),
@@ -216,7 +220,7 @@ const eventDoc = await db.collection('ticket-events').doc(eventId).get();
         status: 'Queue', assignedTo: null, assignedAt: null,
         updatedAt: FieldValue.serverTimestamp(),
       };
-      if (decision === 'approved') Object.assign(updated, scope);
+      if (decision === 'approved') Object.assign(updated, scope, { gradeId: null, gradeName: null });
       // On rejection, original academic scope stays unchanged and ticket returns to Queue.
       tx.update(ticketRef, updated);
       eventsSnap.docs.forEach(d => tx.update(d.ref, {

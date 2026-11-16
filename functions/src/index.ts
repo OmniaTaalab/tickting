@@ -2225,12 +2225,12 @@ function getTransferIdentity(ticket: any): {
 } {
     return {
         id:
-            ticket?.categoryId ||
             ticket?.departmentId ||
+            ticket?.categoryId ||
             null,
         name:
-            ticket?.categoryName ||
             ticket?.departmentName ||
+            ticket?.categoryName ||
             "Unknown Category",
     };
 }
