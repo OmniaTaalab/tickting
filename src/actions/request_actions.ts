@@ -10,7 +10,8 @@ import type { TicketEvent, UserProfile, Ticket, TicketTransferRecord } from '@/l
 /**
  * Validate a specifically selected employee against the ticket's actual scope.
  * Manual reassignment does NOT require Available/activeSessionId: managers may
- * allocate work for later. Scope is still mandatory and never bypassed.
+ * allocate work for later. Academic scope remains mandatory.
+ * General Support and Operations are exempt from academic scope restrictions.
  */
 async function employeeCoversTicketScope(
     db: NonNullable<typeof adminDb>,
@@ -27,6 +28,13 @@ async function employeeCoversTicketScope(
         .replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
     if (e.role !== 'Employee' || !t.departmentId || e.departmentId !== t.departmentId) return false;
+
+    // These categories only require the assignee to be an employee in the same department.
+    // Verify the department name from Firestore rather than trusting the ticket's display name.
+    const departmentDoc = await db.collection('departments').doc(t.departmentId).get();
+    const departmentName = departmentDoc.exists ? normalized(departmentDoc.data()?.name) : '';
+    if (departmentName === 'generalsupport' || departmentName === 'operations') return true;
+
     if (!t.campusId || !values(e.campusIds, e.campusId).includes(t.campusId)) return false;
 
     const routes = Array.isArray(t.routingOptions) ? t.routingOptions : [];

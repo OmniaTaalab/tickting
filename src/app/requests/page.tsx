@@ -158,10 +158,22 @@ function ApproveReassignDialog({
     );
     const { data: categoryStaff, isLoading: isUsersLoading } = useCollection<UserProfile>(usersQuery);
 
+    // General Support and Operations may reassign to any employee in the same category,
+    // regardless of availability or academic scope. Other categories retain their filter.
+    const departmentRef = useMemoFirebase(
+        () => firestore && departmentId ? doc(firestore, 'departments', departmentId) : null,
+        [firestore, departmentId]
+    );
+    const { data: selectedDepartment } = useDoc<Department>(departmentRef);
+    const isScopeExemptDepartment = ['generalsupport', 'operations'].includes(
+        (selectedDepartment?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    );
+
     const availableStaff = useMemo(() => {
         if (!categoryStaff) return [];
+        if (isScopeExemptDepartment) return categoryStaff;
         return categoryStaff.filter(u => u.status === 'Available' || !u.status);
-    }, [categoryStaff]);
+    }, [categoryStaff, isScopeExemptDepartment]);
 
     const handleConfirm = async () => {
         if (!request || !user || !selectedUserId) return;
