@@ -41,7 +41,8 @@ import { Button } from '../ui/button';
 import { useLanguage } from '@/hooks/use-language';
 import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 import { toggleUserStatusAction } from '@/actions/status_actions';
-import { useTicketsList } from '@/hooks/use-tickets-list';
+import { useTicketsList, useTicketFlags } from '@/hooks/use-tickets-list';
+import { useTicketsPolled } from '@/hooks/use-tickets-polled';
 import { sidebarScope } from '@/lib/ticket-scope';
 
 const toDate = (ts: any): Date | null => {
@@ -83,9 +84,26 @@ export function SidebarNav() {
   // PERF: only the active tickets this role can see (superset of relevantActiveTickets below;
   // that filter still runs unchanged). Falls back to the full collection via the kill switch.
   const sidebarTicketScope = user && userProfile
-    ? sidebarScope(userProfile.role, user.uid, userProfile.departmentId)
+    ? sidebarScope(userProfile.role, user.uid, userProfile.departmentId, userProfile.campusIds)
     : null;
-  const { data: allTickets } = useTicketsList<Ticket>(sidebarTicketScope);
+  // PERF/COST: an admin's counter covers every active ticket in the system (~5,600) and a
+  // manager's every active ticket of their campuses. A Firestore listener for that reads each
+  // of those documents again in every tab. With server-computed lists switched on for this
+  // viewer (the same switch as the paged tickets list) the rows — only the fields counted
+  // below — come from the server's in-memory copy and are refreshed once a minute instead.
+  // Employees keep their listener: it is tiny (their own active tickets) and instant.
+  // The counting code below is unchanged; if the server request fails the listener is used.
+  const ticketFlags = useTicketFlags();
+  const sidebarRole = userProfile?.role;
+  const serverCounters = !!(
+    ticketFlags?.enabled && user && sidebarTicketScope &&
+    (sidebarRole === 'Admin' || sidebarRole === 'Manager') &&
+    (ticketFlags.pagedTickets || ticketFlags.pagedTicketsUids.includes(user.uid))
+  );
+  const polledTickets = useTicketsPolled<Ticket>(serverCounters ? sidebarTicketScope : null, 'sidebarCounters');
+  const usePolledTickets = serverCounters && !polledTickets.failed;
+  const { data: listenedTickets } = useTicketsList<Ticket>(usePolledTickets ? null : sidebarTicketScope);
+  const allTickets = usePolledTickets ? polledTickets.data : listenedTickets;
 
   const deptsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'departments')) : null), [firestore]);
   const { data: departments } = useCollection<Department>(deptsQuery);

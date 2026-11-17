@@ -34,6 +34,7 @@ import { Loader2, CheckCheck, XCircle, Circle } from 'lucide-react';
 import type { Department, UserProfile, Ticket as TicketType, Campus } from '@/lib/types';
 import { setDocumentNonBlocking, useCollection, useDoc, useFirebase, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc, query, where } from 'firebase/firestore';
+import { useTicketListCollectionName } from '@/hooks/use-tickets-by-ids';
 import { updatePassword } from 'firebase/auth';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -77,15 +78,18 @@ export default function ProfilePage() {
     );
     const { data: campuses, isLoading: areCampusesLoading } = useCollection<Campus>(campusesQuery);
 
+    // PERF: only the NUMBER of these tickets is shown, so count the lightweight summaries
+    // (same documents, same filters) instead of downloading every full ticket with its messages.
+    const ticketCollection = useTicketListCollectionName();
     const resolvedTicketsQuery = useMemoFirebase(() =>
-        user && firestore ? query(collection(firestore, 'tickets'), where('assignedTo.userId', '==', user.uid), where('status', '==', 'Resolved')) : null,
-        [user, firestore]
+        user && firestore && ticketCollection ? query(collection(firestore, ticketCollection), where('assignedTo.userId', '==', user.uid), where('status', '==', 'Resolved')) : null,
+        [user, firestore, ticketCollection]
     );
     const { data: resolvedTickets, isLoading: areResolvedTicketsLoading } = useCollection<TicketType>(resolvedTicketsQuery);
 
     const closedTicketsQuery = useMemoFirebase(() =>
-        user && firestore ? query(collection(firestore, 'tickets'), where('assignedTo.userId', '==', user.uid), where('status', '==', 'Closed')) : null,
-        [user, firestore]
+        user && firestore && ticketCollection ? query(collection(firestore, ticketCollection), where('assignedTo.userId', '==', user.uid), where('status', '==', 'Closed')) : null,
+        [user, firestore, ticketCollection]
     );
     const { data: closedTickets, isLoading: areClosedTicketsLoading } = useCollection<TicketType>(closedTicketsQuery);
 
@@ -164,7 +168,7 @@ export default function ProfilePage() {
         }
     }
 
-    const isLoading = isProfileLoading || areDepartmentsLoading || areResolvedTicketsLoading || areClosedTicketsLoading || areCampusesLoading;
+    const isLoading = isProfileLoading || areDepartmentsLoading || areResolvedTicketsLoading || areClosedTicketsLoading || areCampusesLoading || ticketCollection === undefined;
 
     if (isLoading) {
         return (

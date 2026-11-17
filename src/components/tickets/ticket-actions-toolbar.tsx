@@ -14,6 +14,7 @@ import type { UserProfile, TicketStatus } from '@/lib/types';
 import { bulkUpdateTicketsAction } from '@/actions/ticket_bulk_update';
 import { bulkDeleteTicketsAction } from '@/actions/ticket_delete';
 import { useToast } from '@/hooks/use-toast';
+import { notifyTicketsChanged } from '@/lib/tickets-changed';
 import { Button } from '../ui/button';
 import { Loader2, Trash2, AlertTriangle, UserCheck } from 'lucide-react';
 import { useLanguage } from '@/hooks/use-language';
@@ -77,6 +78,7 @@ export function TicketActionsToolbar({
       const result = await bulkUpdateTicketsAction({ success: false }, formData);
 
       if (result.success) {
+        notifyTicketsChanged();
         toast({ title: '✅ ' + t('approved'), description: result.message });
         onClear();
       } else {
@@ -97,6 +99,7 @@ export function TicketActionsToolbar({
       const result = await bulkUpdateTicketsAction({ success: false }, formData);
 
       if (result.success) {
+        notifyTicketsChanged();
         toast({ title: '✅ ' + t('approved'), description: result.message });
         onClear();
       } else {
@@ -120,6 +123,7 @@ export function TicketActionsToolbar({
       });
 
       if (result.success) {
+        notifyTicketsChanged();
         toast({
           title: '✅ ' + t('bulkDeleteSuccess', { count: String(result.deletedCount || selectedTicketIds.length) }),
           description: result.message,

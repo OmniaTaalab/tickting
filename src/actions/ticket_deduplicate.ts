@@ -4,7 +4,36 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { revalidatePath } from 'next/cache';
 import { generateUniqueTicketNumber } from '@/lib/ticket-number';
 
-export async function fixDuplicateTicketNumbersAction(): Promise<{ success: boolean; fixedCount: number }> {
+type DeduplicateResult = { success: boolean; fixedCount: number };
+
+/**
+ * Per server instance. Every open tickets page that notices a duplicate number calls this
+ * action at the same moment, and each run reads every ticket in the collection. Callers
+ * that arrive while a run is in progress share it, and a run that just finished
+ * successfully is not repeated for a minute (the repair it would do has just been done).
+ */
+const DEDUPLICATE_COOLDOWN_MS = 60_000;
+let deduplicateInFlight: Promise<DeduplicateResult> | null = null;
+let lastDeduplicateSuccessAt = 0;
+
+export async function fixDuplicateTicketNumbersAction(): Promise<DeduplicateResult> {
+  if (deduplicateInFlight) return deduplicateInFlight;
+  if (Date.now() - lastDeduplicateSuccessAt < DEDUPLICATE_COOLDOWN_MS) {
+    return { success: true, fixedCount: 0 };
+  }
+  const run = runFixDuplicateTicketNumbers()
+    .then(result => {
+      if (result.success) lastDeduplicateSuccessAt = Date.now();
+      return result;
+    })
+    .finally(() => {
+      if (deduplicateInFlight === run) deduplicateInFlight = null;
+    });
+  deduplicateInFlight = run;
+  return run;
+}
+
+async function runFixDuplicateTicketNumbers(): Promise<DeduplicateResult> {
   const db = adminDb;
   if (!db) return { success: false, fixedCount: 0 };
 

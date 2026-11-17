@@ -61,7 +61,7 @@ export default function AnalyticsPage() {
   // PERF: lightweight ticket_summaries scoped to a superset of roleFilteredTickets
   // (src/lib/ticket-scope.ts). Same gate as before.
   const ticketScope = (firestore && user && userProfile)
-    ? analyticsScope(userProfile.role, userProfile.departmentId)
+    ? analyticsScope(userProfile.role, userProfile.departmentId, userProfile.campusIds)
     : null;
   const { data: rawTickets, isLoading: isTicketsLoading } = useTicketsList<Ticket>(ticketScope, { keepAlive: true });
 
