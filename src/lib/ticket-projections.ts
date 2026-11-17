@@ -21,6 +21,30 @@ export const TICKET_PROJECTIONS = {
     // bookkeeping used by the fast store to order live changes
     '_summarySyncedAt',
   ],
+  /**
+   * src/app/tickets/[id]/page.tsx Previous / Next navigation (myAssignedTickets,
+   * orderedMyTicketIds): only the role filter and the created-date order read these tickets.
+   */
+  nav: [
+    'departmentId', 'campusId', 'assignedTo', 'createdAt',
+    // bookkeeping used by the fast store to order live changes
+    '_summarySyncedAt',
+  ],
+  /**
+   * src/components/layout/sidebar-nav.tsx, ADMIN and MANAGER counters only: the active-ticket
+   * counter and the SLA-breach counter (relevantActiveTickets + stats).
+   * `assignedTo` is deliberately left out: only the Employee branch of that filter reads it
+   * (assignedTo.userId), employees never use this projection (they keep their own small
+   * listener), and it is by far the largest of these fields (name, e-mail, avatar URL on each
+   * of thousands of rows). Do NOT use this projection for an employee's counter.
+   */
+  sidebarCounters: [
+    'status', 'departmentId', 'campusId',
+    'assignedAt', 'createdAt', 'firstRespondedAt', 'resolvedAt', 'closedAt',
+    'channel', 'priority',
+    // bookkeeping used by the fast store to order live changes
+    '_summarySyncedAt',
+  ],
 } as const;
 
 export type TicketProjection = keyof typeof TICKET_PROJECTIONS;

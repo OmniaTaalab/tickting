@@ -101,6 +101,14 @@ const noopSubscribe = () => () => {};
 
 const ACTIVE = [...ACTIVE_STATUSES];
 
+/** The category's tickets on the given campuses or with no campus (see ticket-scope.ts). */
+function deptOnCampuses(dept: string, campuses: string[]) {
+  return and(
+    where('departmentId', '==', dept),
+    or(where('campusId', 'in', campuses), where('campusId', '==', null), where('campusId', '==', ''))
+  );
+}
+
 function buildSummaryQuery(firestore: Firestore, scope: TicketScope): Query {
   const col = collection(firestore, 'ticket_summaries');
   switch (scope.kind) {
@@ -109,13 +117,25 @@ function buildSummaryQuery(firestore: Firestore, scope: TicketScope): Query {
     case 'statusIn':
       return query(col, where('status', 'in', ACTIVE));
     case 'deptStatusIn':
-      return query(col, and(where('departmentId', '==', scope.dept), where('status', 'in', ACTIVE)));
+      return scope.campuses
+        ? query(col, and(
+            where('departmentId', '==', scope.dept),
+            where('status', 'in', ACTIVE),
+            or(where('campusId', 'in', scope.campuses), where('campusId', '==', null), where('campusId', '==', ''))
+          ))
+        : query(col, and(where('departmentId', '==', scope.dept), where('status', 'in', ACTIVE)));
     case 'assignedStatusIn':
       return query(col, and(where('assignedTo.userId', '==', scope.uid), where('status', 'in', ACTIVE)));
+    case 'assigned':
+      return query(col, where('assignedTo.userId', '==', scope.uid));
     case 'dept':
-      return query(col, where('departmentId', '==', scope.dept));
+      return scope.campuses
+        ? query(col, deptOnCampuses(scope.dept, scope.campuses))
+        : query(col, where('departmentId', '==', scope.dept));
     case 'assignedOrDept':
-      return query(col, or(where('assignedTo.userId', '==', scope.uid), where('departmentId', '==', scope.dept)));
+      return scope.campuses
+        ? query(col, or(where('assignedTo.userId', '==', scope.uid), deptOnCampuses(scope.dept, scope.campuses)))
+        : query(col, or(where('assignedTo.userId', '==', scope.uid), where('departmentId', '==', scope.dept)));
   }
 }
 

@@ -11,6 +11,43 @@ import { toggleUserStatusAction } from '@/actions/status_actions';
 // URLs that can be accessed without authentication
 const PUBLIC_PATHS = ['/login', '/tickets/new'];
 
+// PERF: every page load used to show nothing until one Firestore read (users/{uid}) had come
+// back, and only then started loading the page's own data. The same check still runs on every
+// load and on every navigation, with the same consequences (not registered / deactivated ->
+// signed out and sent to the login page). But when this browser passed it recently for the
+// same account, the page is shown right away and the check runs alongside the page's data
+// instead of in front of it. A first visit, another account, or a check older than
+// VERIFIED_MAX_AGE_MS waits for the check exactly as before.
+const VERIFIED_KEY = 'nis_profile_verified_v1';
+const VERIFIED_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+function wasRecentlyVerified(uid: string): boolean {
+  try {
+    const raw = window.localStorage.getItem(VERIFIED_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw) as { uid?: unknown; at?: unknown };
+    return saved?.uid === uid && typeof saved.at === 'number' && Date.now() - saved.at >= 0 && Date.now() - saved.at < VERIFIED_MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
+function rememberVerified(uid: string): void {
+  try {
+    window.localStorage.setItem(VERIFIED_KEY, JSON.stringify({ uid, at: Date.now() }));
+  } catch {
+    // storage unavailable: the next load simply waits for the check
+  }
+}
+
+function forgetVerified(): void {
+  try {
+    window.localStorage.removeItem(VERIFIED_KEY);
+  } catch {
+    // nothing to forget
+  }
+}
+
 export function AuthInitializer({ children }: { children: React.ReactNode }) {
   const { user, isUserLoading } = useUser();
   const { firestore } = useFirebase();
@@ -70,6 +107,7 @@ export function AuthInitializer({ children }: { children: React.ReactNode }) {
 
         // If user is not registered in the system
         if (!userData) {
+          forgetVerified();
           if (auth) {
             await signOut(auth);
           }
@@ -86,6 +124,7 @@ export function AuthInitializer({ children }: { children: React.ReactNode }) {
           userData.status === 'Disabled';
 
         if (isInactive) {
+          forgetVerified();
           if (auth) {
             await signOut(auth);
           }
@@ -103,15 +142,21 @@ export function AuthInitializer({ children }: { children: React.ReactNode }) {
           }
         }
 
+        rememberVerified(user.uid);
         if (pathname === '/login') {
           router.replace('/dashboard');
         } else {
           setIsAuthResolved(true);
         }
       };
+      // Passed recently in this browser for this account: show the page now (see VERIFIED_KEY).
+      if (pathname !== '/login' && wasRecentlyVerified(user.uid)) {
+        setIsAuthResolved(true);
+      }
       checkProfileAndSetStatus();
     } else {
       // User is not logged in.
+      forgetVerified();
       if (!isPublicPath && !isGatedTicketPath) {
         router.replace('/login');
       } else {

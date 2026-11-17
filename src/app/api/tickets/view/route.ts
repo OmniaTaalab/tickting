@@ -3,12 +3,13 @@ import { promisify } from 'util';
 import { adminAuth, adminDb } from '@/lib/firebaseAdmin';
 import { UnsupportedValueError } from '@/lib/server/ticket-summary-cache';
 import { computeTicketsView, parseTicketsViewRequest } from '@/lib/server/tickets-view-server';
-import type { ViewerProfile } from '@/lib/tickets-view';
+import { getViewerProfile } from '@/lib/server/viewer-profile';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const gzipAsync = promisify(gzip);
+const SLOW_REQUEST_MS = 500;
 
 /**
  * POST /api/tickets/view   (Authorization: Bearer <Firebase ID token>)
@@ -34,31 +35,41 @@ export async function POST(req: Request) {
     return Response.json({ error: 'unauthenticated' }, { status: 401 });
   }
 
-  let request;
+  let body: unknown;
   try {
-    request = parseTicketsViewRequest(await req.json());
+    body = await req.json();
   } catch {
-    request = null;
+    body = null;
   }
+  const request = parseTicketsViewRequest(body);
   if (!request) return Response.json({ error: 'bad-request' }, { status: 400 });
+  // The profile key the browser currently sees; only used to notice that the cached profile
+  // is out of date (see getViewerProfile). Never used as the profile itself.
+  const rawKey = (body as Record<string, unknown>).profileKey;
+  const clientProfileKey = typeof rawKey === 'string' && rawKey.length <= 2000 ? rawKey : null;
 
   const t0 = Date.now();
   try {
-    const profileSnap = await adminDb.collection('users').doc(uid).get();
-    const profile = (profileSnap.exists ? (profileSnap.data() as ViewerProfile) : null);
+    const profile = await getViewerProfile(adminDb, uid, clientProfileKey);
     const view = await computeTicketsView(adminDb, uid, profile, request);
     const t1 = Date.now();
     const json =
       `{"v":1,"readTime":[${view.readTime[0]},${view.readTime[1]}],"totalItems":${view.totalItems},` +
       `"statusCounts":${JSON.stringify(view.statusCounts)},"hasDuplicateTicketNumber":${view.hasDuplicateTicketNumber},` +
       `"assigneeOptions":${JSON.stringify(view.assigneeOptions)},"ids":${view.ids ? JSON.stringify(view.ids) : 'null'},` +
+      `"idsVersion":${JSON.stringify(view.idsVersion)},"sla":${JSON.stringify(view.sla)},` +
       `"rows":[${view.rows.join(',')}]}`;
-    const body = await gzipAsync(json, { level: 4 });
-    console.log(
-      `[api/tickets/view] uid=${uid.slice(0, 6)} mode=${request.mode} page=${request.page} rows=${view.rows.length}${view.ids ? ` ids=${view.ids.length}` : ''} total=${view.totalItems} ` +
-        `compute=${t1 - t0}ms gzip=${Date.now() - t1}ms gz=${body.length}`
-    );
-    return new Response(new Uint8Array(body), {
+    const gz = await gzipAsync(json, { level: 4 });
+    // Every open tickets page asks for its page every 20 s; logging each call would be tens
+    // of thousands of lines an hour. Log the ones worth looking at: slow ones and exports.
+    const totalMs = Date.now() - t0;
+    if (totalMs >= SLOW_REQUEST_MS || request.mode === 'all') {
+      console.log(
+        `[api/tickets/view] uid=${uid.slice(0, 6)} mode=${request.mode} page=${request.page} rows=${view.rows.length}${view.ids ? ` ids=${view.ids.length}` : ''} total=${view.totalItems} ` +
+          `compute=${t1 - t0}ms gzip=${totalMs - (t1 - t0)}ms gz=${gz.length}`
+      );
+    }
+    return new Response(new Uint8Array(gz), {
       status: 200,
       headers: {
         'content-type': 'application/json; charset=utf-8',

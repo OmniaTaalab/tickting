@@ -39,8 +39,12 @@ import { projectTicket, type TicketProjection } from '@/lib/ticket-projections';
  */
 
 const SYNCED_AT_FIELD = '_summarySyncedAt';
-const FETCH_TIMEOUT_MS = 12_000;
-const READY_TIMEOUT_MS = 20_000;
+// A server instance that has just started reads every summary once before it can answer
+// (10-12 s at ~32k tickets). Giving up at 12 s sent exactly those users to the fallback
+// listener, which streams the same documents to the browser one by one: far slower and
+// billed per document. Wait long enough for a cold instance instead.
+const FETCH_TIMEOUT_MS = 30_000;
+const READY_TIMEOUT_MS = 40_000;
 
 export type FastStoreState<T> = { data: (T & { id: string })[] | null; failed: boolean };
 type Subscriber = () => void;

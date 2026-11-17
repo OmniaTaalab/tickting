@@ -29,7 +29,8 @@ import { autoAssignQueuedTickets } from '@/actions/ticket_assignment';
 import { fixDuplicateTicketNumbersAction } from '@/actions/ticket_deduplicate';
 import { useTicketsList, useTicketFlags } from '@/hooks/use-tickets-list';
 import { useTicketsView } from '@/hooks/use-tickets-view';
-import { listScope } from '@/lib/ticket-scope';
+import { listScope, tasksScope } from '@/lib/ticket-scope';
+import { notifyTicketsChanged } from '@/lib/tickets-changed';
 import {
   applyTicketsFilters,
   hasDuplicateTicketNumber,
@@ -324,6 +325,7 @@ function TicketsContent() {
         const deptId = userProfile?.role === 'Manager' ? userProfile?.departmentId : undefined;
         const res = await autoAssignQueuedTickets({ departmentId: deptId });
         if (res.success && res.assignedCount > 0) {
+          notifyTicketsChanged();
           const names = res.assignments.map(a => `#${a.ticketNumber || a.ticketId.slice(0, 4)} → ${a.assigneeName}`).join(', ');
           toast({
             title: '⚡ ' + t('queueAssignedSuccess').replace('{{count}}', String(res.assignedCount)),
@@ -378,7 +380,7 @@ function TicketsContent() {
   // PERF: subscribe to lightweight ticket_summaries scoped to a superset of what
   // roleFilteredTickets keeps (see src/lib/ticket-scope.ts). Same gate as before.
   const ticketScope = (firestore && !isProfileLoading && user && userProfile)
-    ? listScope(userProfile.role, user.uid, userProfile.departmentId)
+    ? listScope(userProfile.role, user.uid, userProfile.departmentId, userProfile.campusIds)
     : null;
 
   // Date bounds exactly as applyFilters computed them (browser-local day boundaries).
@@ -406,19 +408,42 @@ function TicketsContent() {
 
   // PAGED MODE (settings/ticketSummaries.pagedTickets / pagedTicketsUids): the server computes
   // this view with the same code (src/lib/tickets-view.ts) and returns only the current page.
-  // Not used while the SLA filter is active (it depends on the browser's time zone), and any
-  // failure falls back to the full-load path below for the rest of this page's lifetime.
+  // The SLA filter is applied there too, for this browser's time zone (the working-hours
+  // arithmetic depends on it; see src/lib/working-hours-zoned.ts). Any failure falls back to
+  // the full-load path below for the rest of this page's lifetime.
   const flags = useTicketFlags();
   const pagedAllowed = !!(flags?.enabled && user && (flags.pagedTickets || flags.pagedTicketsUids.includes(user.uid)));
+
+  // Paged mode refreshes on a timer. For the tickets that matter most to the viewer — their
+  // own active ones — it should be instant: a small live listener on exactly those (for an
+  // employee it is the very listener the sidebar already holds, so no extra reads).
+  // Whenever that set changes, the paged list asks the server again at once.
+  const liveScope = (pagedAllowed && user && userProfile) ? tasksScope(user.uid) : null;
+  const { data: liveTickets } = useTicketsList<Ticket>(liveScope);
+  const liveSignal = useMemo(() => {
+    if (!liveTickets) return null;
+    let newest: Timestamp | null = null;
+    for (const item of liveTickets) {
+      const synced = (item as any)._summarySyncedAt;
+      if (synced instanceof Timestamp &&
+        (!newest || synced.seconds > newest.seconds || (synced.seconds === newest.seconds && synced.nanoseconds > newest.nanoseconds))) {
+        newest = synced;
+      }
+    }
+    return { key: `${liveTickets.length}:${newest ? `${newest.seconds}.${newest.nanoseconds}` : '0'}`, minReadTime: newest };
+  }, [liveTickets]);
+
   const view = useTicketsView<Ticket>({
-    enabled: pagedAllowed && filters.sla === 'all' && ticketScope !== null,
+    enabled: pagedAllowed && ticketScope !== null,
+    sla: filters.sla,
     filters: viewFilters,
     status: filters.status,
     page: currentPage,
     pageSize: ITEMS_PER_PAGE,
     profileKey: userProfile ? `${userProfile.role}|${userProfile.departmentId}|${(userProfile.campusIds || []).join(',')}` : null,
+    liveSignal,
   });
-  const pagedMode = pagedAllowed && filters.sla === 'all' && !view.failed;
+  const pagedMode = pagedAllowed && !view.failed;
 
   const { data: rawTickets, isLoading: areTicketsLoading } = useTicketsList<Ticket>(pagedMode ? null : ticketScope, { keepAlive: true });
 
@@ -550,6 +575,7 @@ function TicketsContent() {
         autoAssignQueuedTickets({ departmentId: deptId })
           .then(res => {
             if (res.success && res.assignedCount > 0) {
+              notifyTicketsChanged();
               const names = res.assignments.map(a => `#${a.ticketNumber || a.ticketId.slice(0, 4)} → ${a.assigneeName}`).join(', ');
               toast({
                 title: '⚡ ' + t('queueAssignedSuccess').replace('{{count}}', String(res.assignedCount)),
@@ -582,20 +608,24 @@ function TicketsContent() {
   const exportRows = useCallback(() => fetchAllRows(), [fetchAllRows]);
 
   // Paged mode: the ordered [id, assigneeUserId] list for the current filters, used by the
-  // click-capture below to store next/prev navigation order (main). Refreshed after each view
-  // response; keyed by the request so a stale list is never used for different filters.
-  const orderedIdsRef = useRef<{ key: string; ids: Array<[string, string | null]> } | null>(null);
-  const { fetchOrderedIds, requestKey: viewRequestKey, rows: viewRows } = view;
+  // click-capture below to store next/prev navigation order (main). Keyed by the request so a
+  // stale list is never used for different filters. The server sends a fingerprint of that
+  // list with every page (idsVersion); the list is downloaded again only when the fingerprint
+  // differs from the one we hold, not after every refresh of the page.
+  const orderedIdsRef = useRef<{ key: string; version: string | null; ids: Array<[string, string | null]> } | null>(null);
+  const { fetchOrderedIds, requestKey: viewRequestKey, rows: viewRows, idsVersion: viewIdsVersion } = view;
   useEffect(() => {
     if (!pagedMode || !viewRequestKey || viewRows === null) return;
+    const held = orderedIdsRef.current;
+    if (held && held.key === viewRequestKey && viewIdsVersion !== null && held.version === viewIdsVersion) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       fetchOrderedIds()
-        .then(ids => { if (!cancelled) orderedIdsRef.current = { key: viewRequestKey, ids }; })
+        .then(({ ids, version }) => { if (!cancelled) orderedIdsRef.current = { key: viewRequestKey, version, ids }; })
         .catch(() => { /* click falls back to the visible page */ });
     }, 500);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [pagedMode, viewRequestKey, viewRows, fetchOrderedIds]);
+  }, [pagedMode, viewRequestKey, viewRows, viewIdsVersion, fetchOrderedIds]);
 
   const handleFilterChange = useCallback((newFilters: any) => {
     startTransition(() => {

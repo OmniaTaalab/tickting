@@ -20,6 +20,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useDoc, useCollection, useFirebase, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, query, where, Timestamp } from 'firebase/firestore';
+import { useTicketListCollectionName } from '@/hooks/use-tickets-by-ids';
 import type { UserProfile, Ticket as TicketType, Department, WorkSession } from '@/lib/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatCard } from '@/components/dashboard/stat-card';
@@ -69,15 +70,18 @@ function UserDetailsPage() {
     const { data: departments, isLoading: areDeptsLoading } = useCollection<Department>(deptsQuery);
     const departmentsMap = useMemo(() => new Map(departments?.map(d => [d.id, d.name])), [departments]);
 
+    // PERF: this page reads only id / status / updatedAt / subject of these tickets, so load
+    // the lightweight summaries instead of every full ticket with its messages.
+    const ticketCollection = useTicketListCollectionName();
     const assignedTicketsQuery = useMemoFirebase(() =>
-        userId && firestore ? query(collection(firestore, 'tickets'), where('assignedTo.userId', '==', userId)) : null,
-        [userId, firestore]
+        userId && firestore && ticketCollection ? query(collection(firestore, ticketCollection), where('assignedTo.userId', '==', userId)) : null,
+        [userId, firestore, ticketCollection]
     );
     const { data: assignedTickets, isLoading: areAssignedLoading } = useCollection<TicketType>(assignedTicketsQuery);
     
     const createdTicketsQuery = useMemoFirebase(() =>
-        userId && firestore ? query(collection(firestore, 'tickets'), where('createdBy.userId', '==', userId)) : null,
-        [userId, firestore]
+        userId && firestore && ticketCollection ? query(collection(firestore, ticketCollection), where('createdBy.userId', '==', userId)) : null,
+        [userId, firestore, ticketCollection]
     );
     const { data: createdTickets, isLoading: areCreatedLoading } = useCollection<TicketType>(createdTicketsQuery);
 
@@ -91,7 +95,7 @@ function UserDetailsPage() {
     const resolvedTicketsCount = assignedTickets?.filter(t => t.status === 'Resolved').length || 0;
     const closedTicketsCount = assignedTickets?.filter(t => t.status === 'Closed').length || 0;
 
-    const isLoading = isProfileLoading || areAssignedLoading || areCreatedLoading || areDeptsLoading || areSessionsLoading;
+    const isLoading = isProfileLoading || areAssignedLoading || areCreatedLoading || areDeptsLoading || areSessionsLoading || ticketCollection === undefined;
 
     const canSeeWorkHours = useMemo(() => {
         if (!loggedInUserProfile) return false;

@@ -104,14 +104,15 @@ export function ScopeSelector({ value, onChange, allowedCampusIds, lockedDepartm
     }));
   }, [allCampuses, value.campusIds, schoolName]);
   const divisionOptions = useMemo(() => {
-    const ids = divisionIdsFor(allCampuses, value.campusIds, value.schoolIds);
-    return ids.map((id) => ({ id, label: divisionName.get(id) || id }));
-  }, [allCampuses, value.campusIds, value.schoolIds, divisionName]);
-  const derivedGradeIds = useMemo(
-    () => gradeIdsFor(allCampuses, value.campusIds, value.schoolIds, value.divisionIds),
-    [allCampuses, value.campusIds, value.schoolIds, value.divisionIds]
-  );
-
+    const inTree = divisionIdsFor(allCampuses, value.campusIds, value.schoolIds);
+    // Divisions already stored on the employee stay visible (and removable) even when the
+    // campus structure does not list them under the selected schools.
+    const legacy = value.divisionIds.filter((id) => !inTree.includes(id));
+    return [
+      ...inTree.map((id) => ({ id, label: divisionName.get(id) || id })),
+      ...legacy.map((id) => ({ id, label: divisionName.get(id) || id, hint: 'not in campus structure' })),
+    ];
+  }, [allCampuses, value.campusIds, value.schoolIds, value.divisionIds, divisionName]);
   // ---- mailbox mode ----
   const mailboxOptions = useMemo(() => {
     const list = (mailboxes || []).filter((m) => m.enabled !== false);
@@ -125,14 +126,13 @@ export function ScopeSelector({ value, onChange, allowedCampusIds, lockedDepartm
   }, [mailboxes, allowedCampusIds, lockedDepartmentId]);
   const selectedMailboxes = useMemo(() => (mailboxes || []).filter((m) => value.mailboxIds.includes(m.id)), [mailboxes, value.mailboxIds]);
 
-  // Keep derived fields in sync with the selections (grades in structure mode; everything in mailbox mode).
+  // Mailbox mode: campus, schools, divisions and grades always follow the chosen mailboxes.
+  // Structure mode is NOT synced here on purpose: an existing employee's stored grades must
+  // survive opening the dialog (their divisions may predate the campus division layer).
+  // Grades are recalculated in the change handlers below, only when the admin edits the scope.
   useEffect(() => {
-    if (value.mode === 'structure') {
-      const next = derivedGradeIds;
-      const same = next.length === value.gradeIds.length && next.every((g) => value.gradeIds.includes(g));
-      if (!same) onChange({ ...value, gradeIds: next });
-      return;
-    }
+    if (value.mode === 'structure') return;
+    if (!mailboxes || !campuses) return;
     const derived = scopeFromMailboxes(selectedMailboxes, allCampuses);
     const deptIds = Array.from(new Set(selectedMailboxes.map((m) => m.departmentId)));
     const departmentId = deptIds.length === 1 ? deptIds[0] : value.departmentId;
@@ -147,7 +147,7 @@ export function ScopeSelector({ value, onChange, allowedCampusIds, lockedDepartm
       onChange({ ...value, ...derived, departmentId });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value.mode, value.mailboxIds, derivedGradeIds.join('|'), selectedMailboxes.length, allCampuses.length]);
+  }, [value.mode, value.mailboxIds, selectedMailboxes.length, allCampuses.length, !!mailboxes]);
 
   const setMode = (mode: ScopeMode) => {
     if (mode === value.mode) return;
@@ -158,11 +158,14 @@ export function ScopeSelector({ value, onChange, allowedCampusIds, lockedDepartm
     const schoolIds = value.schoolIds.filter((id) => schoolIdsForCampuses(allCampuses, campusIds).includes(id));
     const divisionIds = value.divisionIds.filter((id) => divisionIdsFor(allCampuses, campusIds, schoolIds).includes(id));
     const dept = departmentsForCampuses(departments || [], campusIds).some((d) => d.id === value.departmentId) ? value.departmentId : lockedDepartmentId || '';
-    onChange({ ...value, campusIds, schoolIds, divisionIds, departmentId: dept });
+    onChange({ ...value, campusIds, schoolIds, divisionIds, departmentId: dept, gradeIds: gradeIdsFor(allCampuses, campusIds, schoolIds, divisionIds) });
   };
   const setSchools = (schoolIds: string[]) => {
     const divisionIds = value.divisionIds.filter((id) => divisionIdsFor(allCampuses, value.campusIds, schoolIds).includes(id));
-    onChange({ ...value, schoolIds, divisionIds });
+    onChange({ ...value, schoolIds, divisionIds, gradeIds: gradeIdsFor(allCampuses, value.campusIds, schoolIds, divisionIds) });
+  };
+  const setDivisions = (divisionIds: string[]) => {
+    onChange({ ...value, divisionIds, gradeIds: gradeIdsFor(allCampuses, value.campusIds, value.schoolIds, divisionIds) });
   };
 
   const err = (key: keyof NonNullable<ScopeSelectorProps['errors']>) =>
@@ -260,7 +263,7 @@ export function ScopeSelector({ value, onChange, allowedCampusIds, lockedDepartm
               <MultiSelect
                 options={divisionOptions}
                 value={value.divisionIds}
-                onChange={(divisionIds) => onChange({ ...value, divisionIds })}
+                onChange={setDivisions}
                 placeholder={value.schoolIds.length ? 'Select divisions…' : 'Select schools first'}
                 emptyText="No divisions configured under the selected schools"
                 disabled={disabled || !value.schoolIds.length}
