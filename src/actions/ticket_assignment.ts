@@ -97,7 +97,7 @@ type Taxonomy = {
 
 const normalizeScope = (v: unknown): string => String(v ?? '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-  .replace(/grade\s*(\d+)/g, 'grade$1').replace(/kg\s*(\d+)/g, 'kg$1')
+  .replace(/grade\s*(\d+)/g, 'grade$1').replace(/kg\s*(\d+)/g, 'kg$1').replace(/year\s*(\d+)/g, 'year$1')
   .replace(/[^a-z0-9]+/g, ' ').trim();
 const textValues = (...values: unknown[]): string[] => {
   const result: string[] = [];

@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLanguage } from '@/hooks/use-language';
+import { formatGradeName } from '@/lib/grade-name';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 
 const getRequestIcon = (type: string) => {
@@ -676,7 +677,7 @@ if (request.eventType === 'TICKET_LOCAL_TRANSFER_REQUESTED') {
       </p>
       <p className="text-xs text-slate-700">
         <strong>Grade:</strong>{' '}
-        {req.requestMetadata.localTransferScope.gradeName}
+        {formatGradeName(req.requestMetadata.localTransferScope.gradeName)}
       </p>
     </div>
   )}

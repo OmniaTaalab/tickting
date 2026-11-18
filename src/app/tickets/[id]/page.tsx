@@ -68,6 +68,7 @@ import { calculateWorkingHoursElapsed } from '@/lib/working-hours-utils';
 import { useTicketsList, useTicketFlags } from '@/hooks/use-tickets-list';
 import { useTicketNav } from '@/hooks/use-ticket-nav';
 import { ticketNavScope } from '@/lib/ticket-scope';
+import { formatGradeName } from '@/lib/grade-name';
 const toDate = (ts: any): Date | null => {
   if (!ts) return null;
   if (typeof ts.toDate === 'function') return ts.toDate();
@@ -1588,7 +1589,7 @@ if (ticket.status === 'Duplicate' || String(ticket.status) === 'Ignored') return
               <DetailRow label={t('ticketId')} value={`T-${ticket.ticketNumber || ticket.id.substring(0, 4)}`} />
               <DetailRow label={t('division')} value={ticket.divisionName || t('na')} />
               <DetailRow label={t('campus')} value={ticket.campusName || t('na')} />
-              <DetailRow label={t('grade')} value={ticket.gradeName || t('na')} />
+              <DetailRow label={t('grade')} value={formatGradeName(ticket.gradeName) || t('na')} />
               <DetailRow label={t('category')} value={ticket.departmentName || t('na')} />
               <DetailRow label={t('assignedTo')} value={ticket.assignedTo?.name || t('unassigned')} />
               <DetailRow 

@@ -5,6 +5,7 @@ import { adminDb } from '@/lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Ticket, UserProfile, Department } from '@/lib/types';
 import { logSystemEvent } from '@/lib/system-log';
+import { formatGradeName } from '@/lib/grade-name';
 import { revalidatePath } from 'next/cache';
 
 const ShareTicketSchema = z.object({
@@ -310,7 +311,7 @@ export async function shareTicketViaEmailAction(
           </tr>
           <tr style="border-bottom: 1px solid #f1f5f9;">
             <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Grade:</td>
-            <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">${escapeHtml(ticketData.gradeName || 'N/A')}</td>
+            <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">${escapeHtml(formatGradeName(ticketData.gradeName) || 'N/A')}</td>
           </tr>
           <tr style="border-bottom: 1px solid #f1f5f9;">
             <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Requester / Parent:</td>
@@ -370,7 +371,7 @@ Channel: ${ticketData.channel || 'Email'}
 Assigned Tech: ${ticketData.assignedTo?.name || 'Unassigned'}
 Campus: ${ticketData.campusName || 'N/A'}
 Division: ${ticketData.divisionName || 'N/A'}
-Grade: ${ticketData.gradeName || 'N/A'}
+Grade: ${formatGradeName(ticketData.gradeName) || 'N/A'}
 Requester: ${ticketData.parentName || ticketData.createdBy?.name || 'N/A'} (${ticketData.parentEmail || ticketData.createdBy?.email || 'N/A'})
 Created Date: ${createdDateStr}
 From Mailbox: ${fromMailbox}
