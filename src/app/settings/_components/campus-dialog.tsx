@@ -14,7 +14,8 @@ import { Label } from '@/components/ui/label';
 import { Loader2, AlertCircle, Plus, Trash2, GraduationCap, Layers } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import type { Campus, School, Grade, Division, CampusSchoolConfig, CampusDivisionConfig } from '@/lib/types';
+import type { Campus, School, Grade, Division, CampusSchoolConfig } from '@/lib/types';
+import { buildSchoolConfig, divisionLayout, withExtraDivision, withMainDivision, type DivisionLayout } from '@/lib/campus-divisions';
 import { createOrUpdateCampusAction } from '@/actions/campus_actions';
 import { useUser, useCollection, useFirebase, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy } from 'firebase/firestore';
@@ -31,34 +32,13 @@ interface CampusDialogProps {
 
 const NONE = '__none__';
 
-/** grade -> division lookup from the stored divisions[] shape. */
-function divisionByGrade(config: CampusSchoolConfig): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const d of config.divisions || []) {
-    if (!d?.divisionId) continue;
-    for (const g of d.gradeIds || []) map.set(g, d.divisionId);
-  }
-  return map;
-}
-
-/** Rebuild the stored shape from "grades offered" + "division per grade". */
-function buildConfig(schoolId: string, gradeIds: string[], byGrade: Map<string, string>): CampusSchoolConfig {
-  const groups = new Map<string, string[]>();
-  for (const g of gradeIds) {
-    const d = byGrade.get(g);
-    if (!d) continue;
-    groups.set(d, [...(groups.get(d) || []), g]);
-  }
-  const divisions: CampusDivisionConfig[] = Array.from(groups, ([divisionId, grades]) => ({ divisionId, gradeIds: grades }));
-  return { schoolId, gradeIds, divisions };
-}
-
 /**
  * One school on the campus:
  *   1. which grades the school offers here,
- *   2. which division each grade belongs to (one division per grade).
- * Divisions are derived from the per-grade choice, so there is no separate
- * "add division" step to get wrong.
+ *   2. which division each grade belongs to (one own division per grade),
+ *   3. divisions that also cover grades of other divisions (e.g. Academic Dean's Office
+ *      over Grade 1-12), each with its own grade list.
+ * See src/lib/campus-divisions.ts.
  */
 function SchoolCard({
   config,
@@ -78,33 +58,37 @@ function SchoolCard({
   onRemove: () => void;
 }) {
   const offered = gradesOfSchoolConfig(config);
-  const byGrade = divisionByGrade(config);
+  const layout = divisionLayout(config);
+  const byGrade = layout.main;
   const gradeName = useMemo(() => new Map(grades.map((g) => [g.id, g.name])), [grades]);
   const divisionOf = (id: string) => divisions.find((d) => d.id === id);
   const unassigned = offered.filter((g) => !byGrade.get(g));
   const [bulkDivision, setBulkDivision] = useState<string>('');
+  const [newExtraDivision, setNewExtraDivision] = useState<string>('');
 
-  const setOffered = (gradeIds: string[]) => {
-    const next = new Map(byGrade);
-    for (const g of Array.from(next.keys())) if (!gradeIds.includes(g)) next.delete(g);
-    onChange(buildConfig(config.schoolId, gradeIds, next));
-  };
-  const setDivision = (gradeId: string, divisionId: string) => {
-    const next = new Map(byGrade);
-    if (divisionId === NONE) next.delete(gradeId);
-    else next.set(gradeId, divisionId);
-    onChange(buildConfig(config.schoolId, offered, next));
-  };
+  const save = (gradeIds: string[], next: DivisionLayout) => onChange(buildSchoolConfig(config.schoolId, gradeIds, next));
+  const setOffered = (gradeIds: string[]) => save(gradeIds, layout);
+  const setDivision = (gradeId: string, divisionId: string) =>
+    save(offered, withMainDivision(layout, gradeId, divisionId === NONE ? null : divisionId));
   const assignUnassigned = () => {
     if (!bulkDivision) return;
-    const next = new Map(byGrade);
-    for (const g of unassigned) next.set(g, bulkDivision);
-    onChange(buildConfig(config.schoolId, offered, next));
+    let next = layout;
+    for (const g of unassigned) next = withMainDivision(next, g, bulkDivision);
+    save(offered, next);
     setBulkDivision('');
+  };
+  const setExtraGrades = (divisionId: string, gradeIds: string[] | null) =>
+    save(offered, withExtraDivision(layout, divisionId, gradeIds));
+  const addExtraDivision = () => {
+    if (!newExtraDivision) return;
+    // Starts with every offered grade that is not already in it; trim the list afterwards.
+    setExtraGrades(newExtraDivision, offered.filter((g) => byGrade.get(g) !== newExtraDivision));
+    setNewExtraDivision('');
   };
 
   // Keep grade rows in the order of the global grade list.
   const orderedOffered = grades.filter((g) => offered.includes(g.id)).map((g) => g.id);
+  const extraDivisions = Array.from(layout.extra.keys());
 
   return (
     <div className="p-4 bg-slate-50 border rounded-xl space-y-4">
@@ -209,6 +193,54 @@ function SchoolCard({
           </div>
         </div>
       )}
+
+      {orderedOffered.length > 0 && (
+        <div className="space-y-2">
+          <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+            <Layers className="h-3 w-3" /> Divisions over several grades
+            <span className="normal-case tracking-normal font-medium text-slate-400 ms-1">· e.g. Academic Dean&apos;s Office, in addition to each grade&apos;s own division</span>
+          </Label>
+          {extraDivisions.map((divisionId) => {
+            const div = divisionOf(divisionId);
+            return (
+              <div key={divisionId} className="flex items-start gap-2">
+                <span className="text-xs font-semibold w-[160px] shrink-0 pt-2.5 flex items-center gap-2 text-slate-700" title={div?.name || divisionId}>
+                  <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: div?.color || '#94a3b8' }} />
+                  <span className="truncate">{div?.name || divisionId}</span>
+                </span>
+                <MultiSelect
+                  options={orderedOffered.filter((g) => byGrade.get(g) !== divisionId).map((g) => ({ id: g, label: gradeName.get(g) || g }))}
+                  value={layout.extra.get(divisionId) || []}
+                  onChange={(ids) => setExtraGrades(divisionId, ids)}
+                  placeholder="Grades this division covers"
+                  className="min-h-10 flex-1"
+                  maxBadges={8}
+                  bulkActions
+                />
+                <Button type="button" variant="ghost" size="icon" title={`Remove ${div?.name || 'division'} from this school`}
+                  onClick={() => setExtraGrades(divisionId, null)} className="h-10 w-10 shrink-0 text-slate-400 hover:text-red-500 hover:bg-red-50">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            );
+          })}
+          <div className="flex items-center gap-1">
+            <Select value={newExtraDivision || undefined} onValueChange={setNewExtraDivision}>
+              <SelectTrigger className="h-8 w-[220px] bg-white text-xs">
+                <SelectValue placeholder="Add a division over several grades…" />
+              </SelectTrigger>
+              <SelectContent>
+                {divisions.filter((d) => !layout.extra.has(d.id)).map((d) => (
+                  <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button type="button" size="sm" variant="outline" className="h-8 text-xs font-bold" disabled={!newExtraDivision} onClick={addExtraDivision}>
+              <Plus className="h-3 w-3 me-1" /> Add
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -245,7 +277,7 @@ export function CampusDialog({ isOpen, onClose, campus }: CampusDialogProps) {
   }, [state, toast, onClose]);
 
   const missingSchool = schoolConfigs.some((c) => !c.schoolId);
-  const unassignedCount = schoolConfigs.reduce((n, c) => n + gradesOfSchoolConfig(c).filter((g) => !divisionByGrade(c).get(g)).length, 0);
+  const unassignedCount = schoolConfigs.reduce((n, c) => n + gradesOfSchoolConfig(c).filter((g) => !divisionLayout(c).main.get(g)).length, 0);
 
   const handleAction = (formData: FormData) => {
     if (!currentUser) return;
