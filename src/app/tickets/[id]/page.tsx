@@ -391,37 +391,54 @@ function TransferCategoryDialog({ isOpen, onClose, ticketId, currentCategory, us
     const { toast } = useToast();
     const { t } = useLanguage();
     const lastProcessedRef = useRef<any>(null);
-    const isEmployee = userRole === 'Employee';
-    const actionToUse = isEmployee ? requestTicketTransferAction : transferTicketToCategoryAction;
+    const isAdmin = userRole === 'Admin';
+    const actionToUse = isAdmin ? transferTicketToCategoryAction : requestTicketTransferAction;
     const [state, dispatch, isPending] = useActionState(actionToUse as any, { success: false, message: '' });
+    const [selectedCampusId, setSelectedCampusId] = useState('');
     const categoriesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'departments')) : null, [firestore]);
+    const campusesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'campuses')) : null, [firestore]);
     const { data: categories } = useCollection<Department>(categoriesQuery);
+    const { data: campuses } = useCollection<Campus>(campusesQuery);
+    useEffect(() => {
+        if (isOpen) setSelectedCampusId('');
+    }, [isOpen]);
     useEffect(() => {
         if (state !== lastProcessedRef.current) {
             if (state.success) { toast({ title: t('approved'), description: state.message }); onClose(); }
-            else if (state.message) { toast({ variant: "destructive", title: "Error", description: state.message }); }
+            else if (state.message) { toast({ variant: 'destructive', title: 'Error', description: state.message }); }
             lastProcessedRef.current = state;
         }
     }, [state, toast, onClose, t]);
     return (
         <Dialog open={isOpen} onOpenChange={onClose}>
             <DialogContent className="sm:max-w-md">
-                <DialogHeader><DialogTitle>{isEmployee ? t('requestTransfer') : t('transferCategory')}</DialogTitle></DialogHeader>
+                <DialogHeader><DialogTitle>{isAdmin ? t('transferCategory') : t('requestTransfer')}</DialogTitle></DialogHeader>
                 <form action={dispatch} className="space-y-4 pt-4">
                     <input type="hidden" name="ticketId" value={ticketId || ''} />
+                    <input type="hidden" name="campusId" value={selectedCampusId} />
                     {actor && <><input type="hidden" name="actorId" value={actor.uid || ''} /><input type="hidden" name="actorName" value={actor.displayName || 'User'} /></>}
                     <div className="space-y-2 text-start">
                         <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{t('category')}</Label>
                         <Select name="newCategoryId" required>
                             <SelectTrigger><SelectValue placeholder={t('allCategories')} /></SelectTrigger>
-                            <SelectContent>{categories?.filter(c => c.id !== currentCategory).map((cat) => (<SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>))}</SelectContent>
+                            <SelectContent>{categories?.filter(c => c.id !== currentCategory).map(cat => (<SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>))}</SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2 text-start">
+                        <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Campus (Optional)</Label>
+                        <Select value={selectedCampusId || '__keep__'} onValueChange={v => setSelectedCampusId(v === '__keep__' ? '' : v)} disabled={isPending}>
+                            <SelectTrigger><SelectValue placeholder="Keep current Campus" /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="__keep__">Keep current Campus</SelectItem>
+                                {(campuses || []).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                            </SelectContent>
                         </Select>
                     </div>
                     <DialogFooter>
                         <Button type="button" variant="ghost" onClick={onClose}>{t('cancel')}</Button>
                         <Button type="submit" disabled={isPending} className="bg-[#1e3a8a] text-white font-bold">
                             {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            {isEmployee ? t('approveBtn') : t('confirmApproval')}
+                            {isAdmin ? t('confirmApproval') : 'Send Request'}
                         </Button>
                     </DialogFooter>
                 </form>
@@ -433,11 +450,13 @@ function TransferCategoryDialog({ isOpen, onClose, ticketId, currentCategory, us
 function LocalTransferDialog({
     isOpen,
     onClose,
-    ticket
+    ticket,
+    userRole
 }: {
     isOpen: boolean;
     onClose: () => void;
     ticket: Ticket;
+    userRole?: string;
 }) {
     const { firestore } = useFirebase();
     const { user } = useAuthUser();
@@ -548,15 +567,13 @@ function LocalTransferDialog({
         if (
             !user ||
             !campusId ||
-            !schoolId ||
-            !divisionId ||
             isSending
         ) return;
 
-        // Validate selected School and Division
+        // School and Division are optional. Validate only selected values.
         if (
-            !availableSchools.some(s => s.id === schoolId) ||
-            !availableDivisions.some(d => d.id === divisionId)
+            (schoolId && !availableSchools.some(s => s.id === schoolId)) ||
+            (divisionId && (!schoolId || !availableDivisions.some(d => d.id === divisionId)))
         ) return;
 
         setIsSending(true);
@@ -618,9 +635,10 @@ function LocalTransferDialog({
                     </DialogTitle>
 
                     <DialogDescription>
-                        Choose Campus, School and Division.
-                        A manager must approve the request
-                        before the change takes effect.
+                        Campus is required. School and Division are optional.
+                        {userRole === 'Admin'
+                            ? ' Admin transfers take effect immediately.'
+                            : ' A destination Campus manager must approve the request.'}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -628,7 +646,7 @@ function LocalTransferDialog({
 
                     {/* Campus */}
                     <div className="space-y-2">
-                        <Label>Campus</Label>
+                        <Label>Campus <span className="text-red-600">*</span></Label>
 
                         <Select
                             value={campusId}
@@ -658,12 +676,12 @@ function LocalTransferDialog({
 
                     {/* School */}
                     <div className="space-y-2">
-                        <Label>School</Label>
+                        <Label>School (Optional)</Label>
 
                         <Select
                             value={schoolId}
                             onValueChange={val => {
-                                setSchoolId(val);
+                                setSchoolId(val === '__none__' ? '' : val);
                                 setDivisionId('');
                             }}
                             disabled={isSending || !campusId}
@@ -679,6 +697,7 @@ function LocalTransferDialog({
                             </SelectTrigger>
 
                             <SelectContent>
+                                <SelectItem value="__none__">No School</SelectItem>
                                 {availableSchools.map(s => (
                                     <SelectItem
                                         key={s.id}
@@ -693,11 +712,11 @@ function LocalTransferDialog({
 
                     {/* Division */}
                     <div className="space-y-2">
-                        <Label>Division</Label>
+                        <Label>Division (Optional)</Label>
 
                         <Select
                             value={divisionId}
-                            onValueChange={setDivisionId}
+                            onValueChange={val => setDivisionId(val === '__none__' ? '' : val)}
                             disabled={isSending || !schoolId}
                         >
                             <SelectTrigger>
@@ -711,6 +730,7 @@ function LocalTransferDialog({
                             </SelectTrigger>
 
                             <SelectContent>
+                                <SelectItem value="__none__">No Division</SelectItem>
                                 {availableDivisions.map(d => (
                                     <SelectItem
                                         key={d.id}
@@ -741,16 +761,14 @@ function LocalTransferDialog({
                                 isSending ||
                                 !user ||
                                 !campusId ||
-                                !schoolId ||
-                                !divisionId ||
-                                !!ticket.pendingLocalTransferRequestId ||
+                                (userRole !== 'Admin' && !!ticket.pendingLocalTransferRequestId) ||
                                 !!ticket.pendingTransferRequestId
                             }
                         >
                             {isSending && (
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             )}
-                            Send Request
+                            {userRole === 'Admin' ? 'Transfer Now' : 'Send Request'}
                         </Button>
                     </DialogFooter>
 
@@ -1343,7 +1361,7 @@ if (ticket.status === 'Duplicate' || String(ticket.status) === 'Ignored') return
        <>
     <div className="space-y-6 max-w-7xl mx-auto pb-20 animate-in fade-in duration-700">
       <TransferCategoryDialog isOpen={isTransferOpen} onClose={() => setTransferOpen(false)} ticketId={ticket.id} currentCategory={ticket.departmentId} userRole={userProfile?.role} />
-        <LocalTransferDialog isOpen={isLocalTransferOpen} onClose={() => setLocalTransferOpen(false)} ticket={ticket} />
+        <LocalTransferDialog isOpen={isLocalTransferOpen} onClose={() => setLocalTransferOpen(false)} ticket={ticket} userRole={userProfile?.role} />
       <AssignPersonDialog isOpen={isAssignOpen} onClose={() => setAssignOpen(false)} ticketId={ticket.id} categoryId={ticket.departmentId} />
       <ManageTagsDialog isOpen={isTagsOpen} onClose={() => setTagsOpen(false)} ticketId={ticket.id} currentTags={ticket.tags || []} />
       <ShareTicketDialog isOpen={isShareOpen} onClose={() => setShareOpen(false)} ticketId={ticket.id} />
@@ -1427,7 +1445,7 @@ if (ticket.status === 'Duplicate' || String(ticket.status) === 'Ignored') return
               <div className="flex flex-wrap items-center justify-end gap-2">
                   <TicketStatusBadge status={ticket.status} />
                             {ticket.status === 'Queue' && ticket.pendingLocalTransferRequestId && ticket.pendingLocalTransferScope && (
-                                <span className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">Waiting for Manager Approval: {ticket.pendingLocalTransferScope.schoolName} / {ticket.pendingLocalTransferScope.divisionName}</span>
+                                <span className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">Waiting for Manager Approval: {[ticket.pendingLocalTransferScope.campusName, ticket.pendingLocalTransferScope.schoolName, ticket.pendingLocalTransferScope.divisionName].filter(Boolean).join(' / ')}</span>
                             )}
                   {ticket.status === 'Queue' && Boolean((ticket as Ticket & {
                     pendingTransferRequestId?: string | null;
@@ -1551,7 +1569,7 @@ if (ticket.status === 'Duplicate' || String(ticket.status) === 'Ignored') return
                                 <Button variant="outline" className="h-10 border-amber-200 text-amber-800 text-xs font-bold" disabled={isUpdatingStatus} onClick={() => updateTicketStatus('Ignored')}><X className="h-3.5 w-3.5" /> Ignore</Button>
                             </div>
                             <Button variant="outline" className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs" onClick={() => setTransferOpen(true)}><RefreshCcw className="h-3.5 w-3.5" /> {userProfile?.role === 'Employee' ? t('requestTransfer') : t('transferCategory')}</Button>
-                                <Button variant="outline" className="w-full h-10 border-blue-200 text-blue-700 font-bold text-xs" onClick={() => setLocalTransferOpen(true)} disabled={!!ticket.pendingLocalTransferRequestId || !!ticket.pendingTransferRequestId}><ArrowRightLeft className="h-3.5 w-3.5" /> Local Transfer</Button>
+                                <Button variant="outline" className="w-full h-10 border-blue-200 text-blue-700 font-bold text-xs" onClick={() => setLocalTransferOpen(true)} disabled={(userProfile?.role !== 'Admin' && !!ticket.pendingLocalTransferRequestId) || !!ticket.pendingTransferRequestId}><ArrowRightLeft className="h-3.5 w-3.5" /> Local Transfer</Button>
                             {userProfile?.role !== 'Employee' ? (
                                 <Button variant="outline" className="w-full h-10 border-slate-100 text-slate-800 font-bold text-xs" onClick={() => setAssignOpen(true)}><UserPlus className="h-3.5 w-3.5" /> {t('assignPerson')}</Button>
                             ) : (

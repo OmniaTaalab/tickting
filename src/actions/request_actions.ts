@@ -158,15 +158,24 @@ export async function approveRequestAction(
         const ticketData = ticketDoc.data() as Ticket;
 
         if (actorData.role !== 'Admin') {
-            const ticketCampusId = ticketData?.campusId;
-            const ticketDeptId = ticketData?.departmentId;
+            const categoryTransfer = event.eventType === 'TICKET_TRANSFER_REQUESTED';
+            const ticketCampusId = categoryTransfer
+                ? (event.requestMetadata?.toCampusId ?? event.requestMetadata?.campusId ?? ticketData?.campusId)
+                : ticketData?.campusId;
+            const ticketDeptId = categoryTransfer
+                ? event.requestMetadata?.toDepartmentId
+                : ticketData?.departmentId;
             const actorCampuses = actorData.campusIds || [];
             const actorDeptId = actorData.departmentId;
 
-            // Managers must own both the department and the campus of the ticket to approve
-            const isAuthorized = 
-                (!ticketCampusId || actorCampuses.length === 0 || actorCampuses.includes(ticketCampusId)) && 
-                (ticketDeptId && actorDeptId === ticketDeptId);
+            // Category transfers are approved by a recipient Manager at the DESTINATION.
+            // Do not use the old department/campus for this request type.
+            const isAuthorized = categoryTransfer
+                ? actorData.role === 'Manager' && event.recipient === actor.userId &&
+                  actorDeptId === ticketDeptId &&
+                  (!ticketCampusId || actorCampuses.includes(ticketCampusId))
+                : (!ticketCampusId || actorCampuses.length === 0 || actorCampuses.includes(ticketCampusId)) &&
+                  (ticketDeptId && actorDeptId === ticketDeptId);
             
             if (!isAuthorized) {
                 // The ticket is outside this manager's current scope. Keep the
@@ -198,19 +207,37 @@ export async function approveRequestAction(
             const categoryDoc = await db.collection('departments').doc(newCategoryId).get();
             const categoryName = categoryDoc.exists ? categoryDoc.data()!.name : 'Unknown Category';
             
-            // Execute automatic assignment in the new category
+            // The target campus was captured when the request was created.
+            // Legacy requests without this field keep the original ticket campus.
+            const targetCampusId = requestMetadata.toCampusId ?? requestMetadata.campusId ?? ticketData.campusId ?? null;
+            const campusChanged = targetCampusId !== (ticketData.campusId || null);
+            const targetCampusDoc = targetCampusId
+                ? await db.collection('campuses').doc(targetCampusId).get()
+                : null;
+            if (targetCampusId && !targetCampusDoc?.exists)
+                return { success: false, message: 'Destination Campus no longer exists.' };
+            const targetCampusName = targetCampusDoc?.data()?.name || requestMetadata.toCampusName || ticketData.campusName || null;
+            if (requestId && ticketData.pendingTransferRequestId !== requestId)
+                return { success: false, message: 'This transfer is no longer the active request.' };
+
+            const routeReset = campusChanged ? {
+                schoolId: null, schoolName: null, school: null,
+                divisionId: null, divisionName: null, division: null,
+                gradeId: null, gradeName: null, grade: null,
+                grades: [], allowedGrades: [], routingOptions: [],
+            } : {};
             const newAssignee = await getRoundRobinAssignee({
                 departmentId: newCategoryId,
-                campusId: ticketData.campusId,
-                schoolId: ticketData.schoolId,
-                divisionId: ticketData.divisionId,
-                gradeId: ticketData.gradeId,
-                schoolName: ticketData.schoolName,
-                divisionName: ticketData.divisionName,
-                gradeName: ticketData.gradeName,
-                grades: (ticketData as any).allowedGrades || (ticketData as any).grades,
+                campusId: targetCampusId,
+                schoolId: campusChanged ? null : ticketData.schoolId,
+                divisionId: campusChanged ? null : ticketData.divisionId,
+                gradeId: campusChanged ? null : ticketData.gradeId,
+                schoolName: campusChanged ? null : ticketData.schoolName,
+                divisionName: campusChanged ? null : ticketData.divisionName,
+                gradeName: campusChanged ? null : ticketData.gradeName,
+                grades: campusChanged ? [] : ((ticketData as any).allowedGrades || (ticketData as any).grades),
                 mailboxEmail: ticketData.mailboxEmail,
-                routingOptions: (ticketData as any).routingOptions,
+                routingOptions: campusChanged ? [] : (ticketData as any).routingOptions,
             });
             const newStatus = newAssignee ? 'Open' : 'Queue';
 
@@ -222,10 +249,10 @@ export async function approveRequestAction(
                 ticketTitle: ticketData.title || ticketData.subject || 'No Subject',
                 ticketSubject: ticketData.subject || ticketData.title || 'No Subject',
                 ticketDescription: ticketData.description || '',
-                campusId: ticketData.campusId || null,
-                campusName: ticketData.campusName || null,
-                divisionId: ticketData.divisionId || null,
-                divisionName: ticketData.divisionName || null,
+                campusId: targetCampusId,
+                campusName: targetCampusName,
+                divisionId: campusChanged ? null : (ticketData.divisionId || null),
+                divisionName: campusChanged ? null : (ticketData.divisionName || null),
                 fromDepartmentId: requestMetadata?.fromDepartmentId || ticketData.departmentId,
                 fromDepartmentName: requestMetadata?.fromDepartmentName || ticketData.departmentName || 'Previous Department',
                 fromUser: (requestMetadata?.fromUserId && requestMetadata?.fromUserName) ? {
@@ -264,6 +291,11 @@ export async function approveRequestAction(
             batch.update(db.collection('tickets').doc(ticketId), {
                 departmentId: newCategoryId,
                 departmentName: categoryName,
+                campusId: targetCampusId,
+                campusName: targetCampusName,
+                ...routeReset,
+                pendingTransferCampusId: FieldValue.delete(),
+                pendingTransferCampusName: FieldValue.delete(),
                 assignedTo: newAssignee ? {
                     userId: newAssignee.id,
                     name: newAssignee.name,
@@ -401,14 +433,22 @@ export async function rejectRequestAction(eventId: string, actor: { userId: stri
             const ticketDoc = await db.collection('tickets').doc(ticketId).get();
             const ticketData = ticketDoc.data();
             
-            const ticketCampusId = ticketData?.campusId;
-            const ticketDeptId = ticketData?.departmentId;
+            const categoryTransfer = event.eventType === 'TICKET_TRANSFER_REQUESTED';
+            const ticketCampusId = categoryTransfer
+                ? (event.requestMetadata?.toCampusId ?? event.requestMetadata?.campusId ?? ticketData?.campusId)
+                : ticketData?.campusId;
+            const ticketDeptId = categoryTransfer
+                ? event.requestMetadata?.toDepartmentId
+                : ticketData?.departmentId;
             const actorCampuses = actorData.campusIds || [];
             const actorDeptId = actorData.departmentId;
 
-            const isAuthorized = 
-                (!ticketCampusId || actorCampuses.length === 0 || actorCampuses.includes(ticketCampusId)) && 
-                (ticketDeptId && actorDeptId === ticketDeptId);
+            const isAuthorized = categoryTransfer
+                ? actorData.role === 'Manager' && event.recipient === actor.userId &&
+                  actorDeptId === ticketDeptId &&
+                  (!ticketCampusId || actorCampuses.includes(ticketCampusId))
+                : (!ticketCampusId || actorCampuses.length === 0 || actorCampuses.includes(ticketCampusId)) &&
+                  (ticketDeptId && actorDeptId === ticketDeptId);
             
             if (!isAuthorized) {
                 // The ticket is outside this manager's current scope. Keep the
@@ -450,6 +490,8 @@ export async function rejectRequestAction(eventId: string, actor: { userId: stri
                 if (!latest.exists || latest.data()?.pendingTransferRequestId !== requestId) return;
                 transaction.update(ticketRef, {
                     ...PENDING_TRANSFER_CLEARED,
+                    pendingTransferCampusId: FieldValue.delete(),
+                    pendingTransferCampusName: FieldValue.delete(),
                     updatedAt: FieldValue.serverTimestamp(),
                 });
             });
