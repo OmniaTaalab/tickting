@@ -385,9 +385,14 @@ This email was shared via NIS Connect Support Portal by ${actorProfile.name}.
     `.trim();
 
     const emailRedirectTo = process.env.EMAIL_REDIRECT_TO;
+    // The test environment never emails real people: without a redirect address it sends nothing.
+    const isStaging = process.env.NEXT_PUBLIC_FIRESTORE_DATABASE_ID === 'staging';
+    if (isStaging && !emailRedirectTo) {
+      console.warn(`STAGING: no EMAIL_REDIRECT_TO set; share email for ticket ${ticketId} not sent.`);
+    }
 
     // 5. Send/Queue the email in Firestore 'mail' collection (Firebase Trigger Email extension standard)
-    await db.collection('mail').add({
+    if (!isStaging || emailRedirectTo) await db.collection('mail').add({
       to: [emailRedirectTo || cleanRecipientEmail],
       from: senderHeader,
       replyTo: fromMailbox,
