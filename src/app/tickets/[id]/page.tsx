@@ -395,12 +395,38 @@ function TransferCategoryDialog({ isOpen, onClose, ticketId, currentCategory, us
     const actionToUse = isAdmin ? transferTicketToCategoryAction : requestTicketTransferAction;
     const [state, dispatch, isPending] = useActionState(actionToUse as any, { success: false, message: '' });
     const [selectedCampusId, setSelectedCampusId] = useState('');
+    const [selectedSchoolId, setSelectedSchoolId] = useState('');
+    const [selectedDivisionId, setSelectedDivisionId] = useState('');
+    const ticketRef = useMemoFirebase(() => firestore && ticketId ? doc(firestore, 'tickets', ticketId) : null, [firestore, ticketId]);
+    const { data: currentTicket } = useDoc<Ticket>(ticketRef);
+    const schoolsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'schools')) : null, [firestore]);
+    const divisionsQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'divisions')) : null, [firestore]);
+    const { data: schools } = useCollection<School>(schoolsQuery);
+    const { data: divisions } = useCollection<Division>(divisionsQuery);
     const categoriesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'departments')) : null, [firestore]);
     const campusesQuery = useMemoFirebase(() => firestore ? query(collection(firestore, 'campuses')) : null, [firestore]);
     const { data: categories } = useCollection<Department>(categoriesQuery);
     const { data: campuses } = useCollection<Campus>(campusesQuery);
+    const effectiveCampusId = selectedCampusId || currentTicket?.campusId || '';
+    const campusChanged = !!selectedCampusId && selectedCampusId !== (currentTicket?.campusId || '');
+    const effectiveSchoolId = selectedSchoolId || (campusChanged ? '' : currentTicket?.schoolId || '');
+    const selectedCampus = campuses?.find(c => c.id === effectiveCampusId);
+    const availableSchools = useMemo(() => {
+        if (!selectedCampus) return [];
+        const configs = selectedCampus.schoolConfigs || [];
+        if (configs.length) return (schools || []).filter(s => configs.some(c => c.schoolId === s.id));
+        return (schools || []).filter(s => {
+            const record = s as School & { campusId?: string; campusIds?: string[] };
+            return record.campusId === effectiveCampusId || record.campusIds?.includes(effectiveCampusId);
+        });
+    }, [selectedCampus, schools, effectiveCampusId]);
+    const availableDivisions = useMemo(() => {
+        const config = selectedCampus?.schoolConfigs?.find(c => c.schoolId === effectiveSchoolId);
+        const ids = (config?.divisions || []).map(d => d.divisionId);
+        return (divisions || []).filter(d => ids.includes(d.id));
+    }, [selectedCampus, effectiveSchoolId, divisions]);
     useEffect(() => {
-        if (isOpen) setSelectedCampusId('');
+        if (isOpen) { setSelectedCampusId(''); setSelectedSchoolId(''); setSelectedDivisionId(''); }
     }, [isOpen]);
     useEffect(() => {
         if (state !== lastProcessedRef.current) {
@@ -416,6 +442,8 @@ function TransferCategoryDialog({ isOpen, onClose, ticketId, currentCategory, us
                 <form action={dispatch} className="space-y-4 pt-4">
                     <input type="hidden" name="ticketId" value={ticketId || ''} />
                     <input type="hidden" name="campusId" value={selectedCampusId} />
+                    <input type="hidden" name="schoolId" value={selectedSchoolId} />
+                    <input type="hidden" name="divisionId" value={selectedDivisionId} />
                     {actor && <><input type="hidden" name="actorId" value={actor.uid || ''} /><input type="hidden" name="actorName" value={actor.displayName || 'User'} /></>}
                     <div className="space-y-2 text-start">
                         <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{t('category')}</Label>
@@ -426,11 +454,31 @@ function TransferCategoryDialog({ isOpen, onClose, ticketId, currentCategory, us
                     </div>
                     <div className="space-y-2 text-start">
                         <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Campus (Optional)</Label>
-                        <Select value={selectedCampusId || '__keep__'} onValueChange={v => setSelectedCampusId(v === '__keep__' ? '' : v)} disabled={isPending}>
+                        <Select value={selectedCampusId || '__keep__'} onValueChange={v => { setSelectedCampusId(v === '__keep__' ? '' : v); setSelectedSchoolId(''); setSelectedDivisionId(''); }} disabled={isPending}>
                             <SelectTrigger><SelectValue placeholder="Keep current Campus" /></SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="__keep__">Keep current Campus</SelectItem>
                                 {(campuses || []).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2 text-start">
+                        <Label>School (Optional)</Label>
+                        <Select value={selectedSchoolId || '__keep__'} onValueChange={v => { setSelectedSchoolId(v === '__keep__' ? '' : v); setSelectedDivisionId(''); }} disabled={isPending || !effectiveCampusId}>
+                            <SelectTrigger><SelectValue placeholder="Keep current School" /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="__keep__">{campusChanged ? 'No School' : 'Keep current School'}</SelectItem>
+                                {availableSchools.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2 text-start">
+                        <Label>Division (Optional)</Label>
+                        <Select value={selectedDivisionId || '__keep__'} onValueChange={v => setSelectedDivisionId(v === '__keep__' ? '' : v)} disabled={isPending || !effectiveSchoolId}>
+                            <SelectTrigger><SelectValue placeholder="Keep current Division" /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="__keep__">{campusChanged || (selectedSchoolId && selectedSchoolId !== currentTicket?.schoolId) ? 'No Division' : 'Keep current Division'}</SelectItem>
+                                {availableDivisions.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
                             </SelectContent>
                         </Select>
                     </div>

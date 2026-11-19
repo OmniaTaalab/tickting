@@ -12,6 +12,8 @@ const RequestTransferSchema = z.object({
   ticketId: z.string().min(1),
   newCategoryId: z.string().min(1),
   campusId: z.string().optional().default(''),
+  schoolId: z.string().optional().default(''),
+  divisionId: z.string().optional().default(''),
   actorId: z.string().min(1),
   actorName: z.string().min(1),
 });
@@ -43,7 +45,7 @@ function managerMatchesTicket(
   ticket: Record<string, any>,
   _departmentOnly: boolean
 ): boolean {
-  // Approval belongs to the manager of the destination category and campus.
+  // Approval belongs to the manager of the CURRENT category and CURRENT campus.
   // School / Division / Grade are not requirements for selecting an approver.
   if (!ticket.campusId) return true; // Legacy tickets without a campus.
   const m = manager as UserProfile & Record<string, any>;
@@ -67,6 +69,8 @@ export async function requestTicketTransferAction(
     ticketId: formData.get('ticketId'),
     newCategoryId: formData.get('newCategoryId'),
     campusId: formData.get('campusId') || '',
+    schoolId: formData.get('schoolId') || '',
+    divisionId: formData.get('divisionId') || '',
     actorId: formData.get('actorId'),
     actorName: formData.get('actorName'),
   });
@@ -82,6 +86,8 @@ export async function requestTicketTransferAction(
     ticketId,
     newCategoryId,
     campusId: selectedCampusId,
+    schoolId: selectedSchoolId,
+    divisionId: selectedDivisionId,
     actorId,
     actorName,
   } = validated.data;
@@ -130,17 +136,27 @@ export async function requestTicketTransferAction(
     if (selectedCampusId && !targetCampusDoc?.exists)
       return { success: false, message: 'Selected Campus does not exist.' };
     const targetCampusName = targetCampusDoc?.data()?.name || (campusChanged ? '' : ticketData.campusName) || null;
-    const targetScope = {
-      ...ticketData,
-      campusId: targetCampusId || null,
-      campusName: targetCampusName,
-      ...(campusChanged ? {
-        schoolId: null, schoolName: null, school: null,
-        divisionId: null, divisionName: null, division: null,
-        gradeId: null, gradeName: null, grade: null,
-      } : {}),
-    };
-
+    // Validate cascading destination scope against the selected/effective campus.
+    const campusConfig = targetCampusDoc?.data()?.schoolConfigs || [];
+    const targetSchoolId = selectedSchoolId || (campusChanged ? '' : ticketData.schoolId || '');
+    const schoolChanged = targetSchoolId !== (ticketData.schoolId || '');
+    const schoolConfig = campusConfig.find((c: any) => c.schoolId === targetSchoolId);
+    if (selectedSchoolId && !schoolConfig)
+      return { success: false, message: 'School is not available in the selected Campus.' };
+    const schoolDoc = targetSchoolId ? await db.collection('schools').doc(targetSchoolId).get() : null;
+    if (targetSchoolId && !schoolDoc?.exists)
+      return { success: false, message: 'Selected School does not exist.' };
+    const targetSchoolName = schoolDoc?.data()?.name || (!schoolChanged ? ticketData.schoolName : null) || null;
+    const targetDivisionId = selectedDivisionId || ((campusChanged || schoolChanged) ? '' : ticketData.divisionId || '');
+    const divisionChanged = targetDivisionId !== (ticketData.divisionId || '');
+    const allowedDivisionIds = (schoolConfig?.divisions || []).map((d: any) => d.divisionId);
+    if (selectedDivisionId && (!targetSchoolId || !allowedDivisionIds.includes(selectedDivisionId)))
+      return { success: false, message: 'Division is not available in the selected School.' };
+    const divisionDoc = targetDivisionId ? await db.collection('divisions').doc(targetDivisionId).get() : null;
+    if (targetDivisionId && !divisionDoc?.exists)
+      return { success: false, message: 'Selected Division does not exist.' };
+    const targetDivisionName = divisionDoc?.data()?.name || (!divisionChanged ? ticketData.divisionName : null) || null;
+    const scopeChanged = campusChanged || schoolChanged || divisionChanged;
     const targetCategoryName =
       targetCategoryDoc.data()!.name as string;
 
@@ -191,23 +207,23 @@ export async function requestTicketTransferAction(
       };
     }
 
-    // 3. Find managers of the TARGET category.
-    const targetManagersSnapshot = await db
+    // 3. Find managers of the CURRENT category and CURRENT campus.
+    const currentManagersSnapshot = await db
       .collection('users')
-      .where('departmentId', '==', newCategoryId)
+      .where('departmentId', '==', ticketData.departmentId)
       .where('role', '==', 'Manager')
       .get();
 
     const recipientIds = new Set<string>();
 
-    targetManagersSnapshot.docs.forEach(doc => {
+    currentManagersSnapshot.docs.forEach(doc => {
       const manager = doc.data() as UserProfile;
 
       if (
         managerMatchesTicket(
           manager,
-          targetScope,
-          false // Approver must match the destination campus, even for General Support/Operations.
+          ticketData,
+          false // Approver must match the original campus.
         )
       ) {
         recipientIds.add(doc.id);
@@ -218,7 +234,7 @@ export async function requestTicketTransferAction(
       return {
         success: false,
         message:
-          'No manager found for the destination Category and Campus.',
+          'No manager found for the current Category and Campus.',
       };
     }
 
@@ -296,20 +312,19 @@ export async function requestTicketTransferAction(
         toCampusName: targetCampusName,
         campusChanged,
 
-        schoolId:
-          campusChanged ? null : (currentTicket.schoolId || null),
-        schoolName:
-          campusChanged ? null : (currentTicket.schoolName || null),
-
-        divisionId:
-          campusChanged ? null : (currentTicket.divisionId || null),
-        divisionName:
-          campusChanged ? null : (currentTicket.divisionName || null),
-
-        gradeId:
-          campusChanged ? null : (currentTicket.gradeId || null),
-        gradeName:
-          campusChanged ? null : (currentTicket.gradeName || null),
+        fromSchoolId: currentTicket.schoolId || null,
+        fromDivisionId: currentTicket.divisionId || null,
+        schoolId: targetSchoolId || null,
+        schoolName: targetSchoolName,
+        toSchoolId: targetSchoolId || null,
+        toSchoolName: targetSchoolName,
+        divisionId: targetDivisionId || null,
+        divisionName: targetDivisionName,
+        toDivisionId: targetDivisionId || null,
+        toDivisionName: targetDivisionName,
+        gradeId: scopeChanged ? null : (currentTicket.gradeId || null),
+        gradeName: scopeChanged ? null : (currentTicket.gradeName || null),
+        scopeChanged,
       };
 
       // Store one canonical request for approval.
@@ -327,6 +342,10 @@ export async function requestTicketTransferAction(
         requestedCategoryName: targetCategoryName,
         requestedCampusId: targetCampusId || null,
         requestedCampusName: targetCampusName,
+        requestedSchoolId: targetSchoolId || null,
+        requestedSchoolName: targetSchoolName,
+        requestedDivisionId: targetDivisionId || null,
+        requestedDivisionName: targetDivisionName,
 
         recipientIds: Array.from(recipientIds),
         requestMetadata: metadata,
@@ -415,7 +434,7 @@ export async function requestTicketTransferAction(
       success: true,
       message:
         `Transfer request sent for approval to ` +
-        `${targetCategoryName}. Ticket moved to Queue.`,
+        `the current Category manager. Ticket moved to Queue.`,
     };
 
   } catch (error: any) {

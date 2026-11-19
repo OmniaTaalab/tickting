@@ -159,17 +159,23 @@ export async function approveRequestAction(
 
         if (actorData.role !== 'Admin') {
             const categoryTransfer = event.eventType === 'TICKET_TRANSFER_REQUESTED';
+            // A category-transfer request must be decided by the manager of the
+            // SOURCE category and SOURCE campus, never the destination scope.
             const ticketCampusId = categoryTransfer
-                ? (event.requestMetadata?.toCampusId ?? event.requestMetadata?.campusId ?? ticketData?.campusId)
+                ? (event.requestMetadata?.fromCampusId ?? ticketData?.campusId)
                 : ticketData?.campusId;
             const ticketDeptId = categoryTransfer
-                ? event.requestMetadata?.toDepartmentId
+                ? (event.requestMetadata?.fromDepartmentId ?? ticketData?.departmentId)
                 : ticketData?.departmentId;
-            const actorCampuses = actorData.campusIds || [];
+            const actorCampuses = [
+                ...((actorData.campusIds || []) as string[]),
+                ...((actorData as UserProfile & { campusId?: string }).campusId
+                    ? [(actorData as UserProfile & { campusId?: string }).campusId!]
+                    : []),
+            ];
             const actorDeptId = actorData.departmentId;
 
-            // Category transfers are approved by a recipient Manager at the DESTINATION.
-            // Do not use the old department/campus for this request type.
+            // Only the recipient manager in the original scope can approve.
             const isAuthorized = categoryTransfer
                 ? actorData.role === 'Manager' && event.recipient === actor.userId &&
                   actorDeptId === ticketDeptId &&
@@ -220,24 +226,47 @@ export async function approveRequestAction(
             if (requestId && ticketData.pendingTransferRequestId !== requestId)
                 return { success: false, message: 'This transfer is no longer the active request.' };
 
-            const routeReset = campusChanged ? {
-                schoolId: null, schoolName: null, school: null,
-                divisionId: null, divisionName: null, division: null,
-                gradeId: null, gradeName: null, grade: null,
-                grades: [], allowedGrades: [], routingOptions: [],
-            } : {};
+            // Legacy requests may not carry school/division destinations.
+            const scope = requestMetadata as typeof requestMetadata & {
+                toSchoolId?: string | null;
+                toDivisionId?: string | null;
+            };
+            const targetSchoolId = scope.toSchoolId !== undefined
+                ? scope.toSchoolId : (campusChanged ? null : ticketData.schoolId || null);
+            const schoolChanged = (targetSchoolId || null) !== (ticketData.schoolId || null);
+            const targetDivisionId = scope.toDivisionId !== undefined
+                ? scope.toDivisionId : ((campusChanged || schoolChanged) ? null : ticketData.divisionId || null);
+            const divisionChanged = (targetDivisionId || null) !== (ticketData.divisionId || null);
+            const scopeChanged = campusChanged || schoolChanged || divisionChanged;
+            const schoolDoc = targetSchoolId ? await db.collection('schools').doc(targetSchoolId).get() : null;
+            const divisionDoc = targetDivisionId ? await db.collection('divisions').doc(targetDivisionId).get() : null;
+            if (targetSchoolId && !schoolDoc?.exists) return { success: false, message: 'Destination School no longer exists.' };
+            if (targetDivisionId && !divisionDoc?.exists) return { success: false, message: 'Destination Division no longer exists.' };
+            const schoolConfigs = targetCampusDoc?.data()?.schoolConfigs || [];
+            const schoolConfig = schoolConfigs.find((c: any) => c.schoolId === targetSchoolId);
+            if (targetSchoolId && !schoolConfig) return { success: false, message: 'Destination School is not in the selected Campus.' };
+            if (targetDivisionId && !(schoolConfig?.divisions || []).some((d: any) => d.divisionId === targetDivisionId))
+                return { success: false, message: 'Destination Division is not in the selected School.' };
+            const targetSchoolName = schoolDoc?.data()?.name || (!schoolChanged ? ticketData.schoolName : null) || null;
+            const targetDivisionName = divisionDoc?.data()?.name || (!divisionChanged ? ticketData.divisionName : null) || null;
+            const routeReset = {
+                schoolId: targetSchoolId || null, schoolName: targetSchoolName, school: targetSchoolName,
+                divisionId: targetDivisionId || null, divisionName: targetDivisionName, division: targetDivisionName,
+                ...(scopeChanged ? { gradeId: null, gradeName: null, grade: null,
+                    grades: [], allowedGrades: [], routingOptions: [] } : {}),
+            };
             const newAssignee = await getRoundRobinAssignee({
                 departmentId: newCategoryId,
                 campusId: targetCampusId,
-                schoolId: campusChanged ? null : ticketData.schoolId,
-                divisionId: campusChanged ? null : ticketData.divisionId,
-                gradeId: campusChanged ? null : ticketData.gradeId,
-                schoolName: campusChanged ? null : ticketData.schoolName,
-                divisionName: campusChanged ? null : ticketData.divisionName,
-                gradeName: campusChanged ? null : ticketData.gradeName,
-                grades: campusChanged ? [] : ((ticketData as any).allowedGrades || (ticketData as any).grades),
+                schoolId: targetSchoolId,
+                divisionId: targetDivisionId,
+                gradeId: scopeChanged ? null : ticketData.gradeId,
+                schoolName: targetSchoolName,
+                divisionName: targetDivisionName,
+                gradeName: scopeChanged ? null : ticketData.gradeName,
+                grades: scopeChanged ? [] : ((ticketData as any).allowedGrades || (ticketData as any).grades),
                 mailboxEmail: ticketData.mailboxEmail,
-                routingOptions: campusChanged ? [] : (ticketData as any).routingOptions,
+                routingOptions: scopeChanged ? [] : (ticketData as any).routingOptions,
             });
             const newStatus = newAssignee ? 'Open' : 'Queue';
 
@@ -251,8 +280,8 @@ export async function approveRequestAction(
                 ticketDescription: ticketData.description || '',
                 campusId: targetCampusId,
                 campusName: targetCampusName,
-                divisionId: campusChanged ? null : (ticketData.divisionId || null),
-                divisionName: campusChanged ? null : (ticketData.divisionName || null),
+                divisionId: targetDivisionId || null,
+                divisionName: targetDivisionName,
                 fromDepartmentId: requestMetadata?.fromDepartmentId || ticketData.departmentId,
                 fromDepartmentName: requestMetadata?.fromDepartmentName || ticketData.departmentName || 'Previous Department',
                 fromUser: (requestMetadata?.fromUserId && requestMetadata?.fromUserName) ? {
@@ -434,13 +463,20 @@ export async function rejectRequestAction(eventId: string, actor: { userId: stri
             const ticketData = ticketDoc.data();
             
             const categoryTransfer = event.eventType === 'TICKET_TRANSFER_REQUESTED';
+            // A category-transfer request must be decided by the manager of the
+            // SOURCE category and SOURCE campus, never the destination scope.
             const ticketCampusId = categoryTransfer
-                ? (event.requestMetadata?.toCampusId ?? event.requestMetadata?.campusId ?? ticketData?.campusId)
+                ? (event.requestMetadata?.fromCampusId ?? ticketData?.campusId)
                 : ticketData?.campusId;
             const ticketDeptId = categoryTransfer
-                ? event.requestMetadata?.toDepartmentId
+                ? (event.requestMetadata?.fromDepartmentId ?? ticketData?.departmentId)
                 : ticketData?.departmentId;
-            const actorCampuses = actorData.campusIds || [];
+            const actorCampuses = [
+                ...((actorData.campusIds || []) as string[]),
+                ...((actorData as UserProfile & { campusId?: string }).campusId
+                    ? [(actorData as UserProfile & { campusId?: string }).campusId!]
+                    : []),
+            ];
             const actorDeptId = actorData.departmentId;
 
             const isAuthorized = categoryTransfer
