@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import {
   Select,
   SelectContent,
@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/select';
 import { useCollection, useFirebase, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, query, doc } from 'firebase/firestore';
-import type { UserProfile, TicketStatus } from '@/lib/types';
+import type { UserProfile, TicketStatus, Department } from '@/lib/types';
 import { bulkUpdateTicketsAction } from '@/actions/ticket_bulk_update';
 import { bulkDeleteTicketsAction } from '@/actions/ticket_delete';
 import { useToast } from '@/hooks/use-toast';
@@ -55,6 +55,18 @@ export function TicketActionsToolbar({
   const { data: userProfile } = useDoc<UserProfile>(userProfileRef);
 
   const isAdmin = userProfile?.role === 'Admin';
+  const isManager = userProfile?.role === 'Manager';
+  const managerDeptRef = useMemoFirebase(() =>
+    firestore && isManager && userProfile?.departmentId
+      ? doc(firestore, 'departments', userProfile.departmentId)
+      : null,
+    [firestore, isManager, userProfile?.departmentId]
+  );
+  const { data: managerDepartment } = useDoc<Department>(managerDeptRef);
+  const normalizedDepartmentName = (managerDepartment?.name || '')
+    .toLowerCase().replace(/[^a-z0-9]/g, '');
+  const scopeExempt = normalizedDepartmentName === 'generalsupport' ||
+    normalizedDepartmentName === 'operations';
 
   // Fetch all staff users for assignment
   const usersQuery = useMemoFirebase(() => {
@@ -63,17 +75,71 @@ export function TicketActionsToolbar({
   }, [firestore]);
   const { data: allUsers, isLoading: areUsersLoading } = useCollection<UserProfile>(usersQuery);
 
-  // Filter staff who can receive tickets (Employees, Managers, Admins)
-  const assignableUsers = (allUsers || []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  // Admin: all user profiles, as before.
+  // Manager: employees from their department who overlap BOTH their campus and division scope.
+  // Do not mutate the Firestore collection array with an in-place sort.
+  const assignableUsers = useMemo(() => {
+    if (!userProfile || !allUsers) return [];
+
+    if (userProfile.role === 'Admin') {
+      return [...allUsers].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '')
+      );
+    }
+
+    if (userProfile.role !== 'Manager' || !userProfile.departmentId) return [];
+
+    type ScopedProfile = UserProfile & {
+      campusId?: string;
+      divisionId?: string;
+      divisionIds?: string[];
+      allowedDivisions?: string[];
+    };
+
+    const manager = userProfile as ScopedProfile;
+    if (scopeExempt) {
+      return allUsers.filter(u => u.role === 'Employee' &&
+        u.departmentId === manager.departmentId).sort((a, b) =>
+        (a.name || '').localeCompare(b.name || ''));
+    }
+    const managerCampusIds = new Set([
+      ...(manager.campusIds || []),
+      ...(manager.campusId ? [manager.campusId] : []),
+    ]);
+    const managerDivisionIds = new Set([
+      ...(manager.divisionIds || []),
+      ...(manager.allowedDivisions || []),
+      ...(manager.divisionId ? [manager.divisionId] : []),
+    ]);
+
+    return allUsers.filter((user): user is UserProfile => {
+      if (user.role !== 'Employee' || user.departmentId !== manager.departmentId) return false;
+      const employee = user as ScopedProfile;
+      const employeeCampusIds = [
+        ...(employee.campusIds || []),
+        ...(employee.campusId ? [employee.campusId] : []),
+      ];
+      const employeeDivisionIds = [
+        ...(employee.divisionIds || []),
+        ...(employee.allowedDivisions || []),
+        ...(employee.divisionId ? [employee.divisionId] : []),
+      ];
+      // Missing scope must not accidentally grant access to every employee.
+      return employeeCampusIds.some(id => managerCampusIds.has(id)) &&
+        employeeDivisionIds.some(id => managerDivisionIds.has(id));
+    }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [allUsers, userProfile, scopeExempt]);
 
   const handleStatusChange = (newStatus: TicketStatus) => {
-    if (!newStatus || selectedTicketIds.length === 0) return;
+    if (!newStatus || selectedTicketIds.length === 0 || !user ||
+      !['Admin', 'Manager'].includes(userProfile?.role || '')) return;
     
     startStatusTransition(async () => {
       const formData = new FormData();
       selectedTicketIds.forEach(id => formData.append('ticketIds', id));
       formData.append('status', newStatus);
-      
+      formData.append('idToken', await user.getIdToken());
+
       toast({ title: t('loading'), description: t('statusUpdated') });
       const result = await bulkUpdateTicketsAction({ success: false }, formData);
 
@@ -88,12 +154,14 @@ export function TicketActionsToolbar({
   };
 
   const handleAssigneeChange = (newAssigneeId: string) => {
-    if (!newAssigneeId || selectedTicketIds.length === 0) return;
+    if (!newAssigneeId || selectedTicketIds.length === 0 || !user || !userProfile || !['Admin', 'Manager'].includes(userProfile.role)) return;
+    if (newAssigneeId !== 'unassigned' && !assignableUsers.some(staff => staff.id === newAssigneeId)) return;
 
     startAssigneeTransition(async () => {
       const formData = new FormData();
       selectedTicketIds.forEach(id => formData.append('ticketIds', id));
       formData.append('assigneeId', newAssigneeId);
+      formData.append('idToken', await user.getIdToken());
 
       toast({ title: t('loading'), description: t('assignPerson') });
       const result = await bulkUpdateTicketsAction({ success: false }, formData);
@@ -171,7 +239,7 @@ export function TicketActionsToolbar({
             </SelectContent>
           </Select>
 
-          <Select onValueChange={handleAssigneeChange} disabled={areUsersLoading || isPending}>
+          <Select onValueChange={handleAssigneeChange} disabled={areUsersLoading || !userProfile || !['Admin', 'Manager'].includes(userProfile.role) || isPending}>
             <SelectTrigger className="w-auto min-w-[130px] sm:w-[160px] h-8 text-xs font-semibold bg-white border-slate-200">
               <SelectValue placeholder={areUsersLoading ? t('loading') : t('assignToPlaceholder')} />
             </SelectTrigger>
@@ -179,6 +247,9 @@ export function TicketActionsToolbar({
               <SelectItem value="unassigned">
                 <span className="italic text-slate-500">{t('unassigned')}</span>
               </SelectItem>
+              {assignableUsers.length === 0 && (
+                <SelectItem value="no-eligible-staff" disabled>No eligible employees found</SelectItem>
+              )}
               {assignableUsers.map((staff) => (
                 <SelectItem key={staff.id} value={staff.id}>
                   <div className="flex items-center gap-2">

@@ -11,6 +11,7 @@ import type { Ticket, UserProfile, TicketTransferRecord } from '@/lib/types';
 const TransferSchema = z.object({
   ticketId: z.string().min(1),
   newCategoryId: z.string().min(1),
+  campusId: z.string().optional().default(''),
   actorId: z.string().min(1),
   actorName: z.string().min(1),
 });
@@ -21,11 +22,7 @@ export type TransferState = {
   errors?: { form?: string[] };
 };
 
-/**
- * Recover the actual routing scope of a ticket, including email mailbox routes.
- * Never infer a route by mixing school/division/grades from separate routes.
- * The round-robin matcher handles ambiguous or missing scope by returning null.
- */
+/** Preserve complete mailbox routes, without mixing separate routes. */
 function ticketAssignmentScope(ticket: Ticket, departmentId: string) {
   const t = ticket as Ticket & {
     school?: string | null;
@@ -36,9 +33,7 @@ function ticketAssignmentScope(ticket: Ticket, departmentId: string) {
     routingOptions?: Array<{ school: string; division: string; grades: string[] }>;
     originalRecipientEmail?: string | null;
   };
-
   const routes = Array.isArray(t.routingOptions) ? t.routingOptions : [];
-  // Preserve every complete route. Do not flatten their grades into one list.
   const routingOptions = routes.map(route => ({
     school: route.school,
     division: route.division,
@@ -47,7 +42,6 @@ function ticketAssignmentScope(ticket: Ticket, departmentId: string) {
   const grades = Array.isArray(t.grades) && t.grades.length > 0
     ? t.grades
     : (Array.isArray(t.allowedGrades) ? t.allowedGrades : []);
-
   return {
     departmentId,
     campusId: t.campusId || null,
@@ -73,43 +67,54 @@ export async function transferTicketToCategoryAction(
   const validated = TransferSchema.safeParse({
     ticketId: formData.get('ticketId'),
     newCategoryId: formData.get('newCategoryId'),
+    campusId: formData.get('campusId') || '',
     actorId: formData.get('actorId'),
     actorName: formData.get('actorName'),
   });
   if (!validated.success) {
     return { success: false, message: 'Validation failed. Please check the selected category.' };
   }
-  const { ticketId, newCategoryId, actorId, actorName } = validated.data;
+  const { ticketId, newCategoryId, campusId: selectedCampusId, actorId, actorName } = validated.data;
 
   try {
-    // Check the current actor. This keeps the existing department restriction,
-    // and also blocks an unknown actor from bypassing that restriction.
     const actorDoc = await db.collection('users').doc(actorId).get();
     if (!actorDoc.exists) return { success: false, message: 'User not found.' };
     const actorData = actorDoc.data() as UserProfile;
+    // Admin makes an immediate transfer; other roles use requestTicketTransferAction.
+    if (actorData.role !== 'Admin') {
+      return { success: false, message: 'A Manager or Employee must request transfer approval.' };
+    }
 
     const ticketRef = db.collection('tickets').doc(ticketId);
     const ticketDoc = await ticketRef.get();
     if (!ticketDoc.exists) return { success: false, message: 'Ticket not found.' };
     const ticketData = ticketDoc.data() as Ticket;
 
-    if (actorData.role !== 'Admin' &&
-        ticketData.departmentId && actorData.departmentId !== ticketData.departmentId) {
-      return {
-        success: false,
-        message: `Permission denied: This ticket belongs to ${ticketData.departmentName || 'another department'}. Transferred tickets are read-only for previous departments.`,
-      };
-    }
-
     const categoryDoc = await db.collection('departments').doc(newCategoryId).get();
     if (!categoryDoc.exists) return { success: false, message: 'Selected category does not exist.' };
     const categoryName = categoryDoc.data()!.name;
 
-    // The ONLY automatic assignment path here goes through the validated
-    // department + campus + school + division + grade (+ mailbox route) scope.
-    const newAssignee = await getRoundRobinAssignee(
-      ticketAssignmentScope(ticketData, newCategoryId)
-    );
+    const targetCampusId = selectedCampusId || ticketData.campusId || '';
+    const campusChanged = !!selectedCampusId && selectedCampusId !== (ticketData.campusId || '');
+    const campusDoc = targetCampusId ? await db.collection('campuses').doc(targetCampusId).get() : null;
+    if (selectedCampusId && !campusDoc?.exists)
+      return { success: false, message: 'Selected Campus does not exist.' };
+    const targetCampusName = campusDoc?.data()?.name || ticketData.campusName || null;
+
+    // Changing Campus invalidates the old academic route. An unchanged Campus retains it.
+    const routingReset = campusChanged ? {
+      schoolId: null, schoolName: null, school: null,
+      divisionId: null, divisionName: null, division: null,
+      gradeId: null, gradeName: null, grade: null,
+      grades: [], allowedGrades: [], routingOptions: [],
+    } : {};
+    const ticketForAssignment = {
+      ...ticketData,
+      campusId: targetCampusId || null,
+      campusName: targetCampusName,
+      ...routingReset,
+    } as Ticket;
+    const newAssignee = await getRoundRobinAssignee(ticketAssignmentScope(ticketForAssignment, newCategoryId));
     const newStatus = newAssignee ? 'Open' : 'Queue';
 
     const transferId = `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -120,10 +125,10 @@ export async function transferTicketToCategoryAction(
       ticketTitle: ticketData.title || ticketData.subject || 'No Subject',
       ticketSubject: ticketData.subject || ticketData.title || 'No Subject',
       ticketDescription: ticketData.description || '',
-      campusId: ticketData.campusId || null,
-      campusName: ticketData.campusName || null,
-      divisionId: ticketData.divisionId || null,
-      divisionName: ticketData.divisionName || null,
+      campusId: targetCampusId || null,
+      campusName: targetCampusName,
+      divisionId: ticketForAssignment.divisionId || null,
+      divisionName: ticketForAssignment.divisionName || null,
       fromDepartmentId: ticketData.departmentId,
       fromDepartmentName: ticketData.departmentName || 'Previous Department',
       fromUser: ticketData.assignedTo ? {
@@ -146,10 +151,12 @@ export async function transferTicketToCategoryAction(
       transferredAt: new Date().toISOString(),
     };
 
-    // Keep all original ticket routing fields unchanged. Only ownership changes.
     const updates: Record<string, any> = {
       departmentId: newCategoryId,
       departmentName: categoryName,
+      campusId: targetCampusId || null,
+      campusName: targetCampusName,
+      ...routingReset,
       assignedTo: newAssignee ? {
         userId: newAssignee.id,
         name: newAssignee.name,
@@ -173,12 +180,14 @@ export async function transferTicketToCategoryAction(
     await logSystemEvent({
       eventType: 'TICKET_TRANSFERRED',
       actor: { userId: actorId, name: actorName },
-      message: `${actorName} transferred ticket #${ticketData.ticketNumber || ticketId.substring(0, 4)} from "${ticketData.departmentName}" to "${categoryName}".`,
+      message: `${actorName} transferred ticket #${ticketData.ticketNumber || ticketId.substring(0, 4)} from "${ticketData.departmentName}" to "${categoryName}"${targetCampusName ? ` / ${targetCampusName}` : ''}.`,
       details: {
         ticketId, transferId,
         fromDepartmentId: ticketData.departmentId,
         fromDepartmentName: ticketData.departmentName,
         newCategoryId, newCategoryName: categoryName,
+        oldCampusId: ticketData.campusId || null,
+        newCampusId: targetCampusId || null,
         previousAssigneeId: ticketData.assignedTo?.userId || null,
         previousAssigneeName: ticketData.assignedTo?.name || 'Unassigned',
         newAssigneeId: newAssignee?.id || null,
@@ -204,7 +213,7 @@ export async function transferTicketToCategoryAction(
     revalidatePath('/dashboard');
     return {
       success: true,
-      message: `Successfully transferred to ${categoryName}. ${newAssignee ? `Assigned to ${newAssignee.name}.` : 'No eligible staff available, moved to Queue.'}`,
+      message: `Successfully transferred to ${categoryName}${targetCampusName ? ` / ${targetCampusName}` : ''}. ${newAssignee ? `Assigned to ${newAssignee.name}.` : 'No eligible staff available, moved to Queue.'}`,
     };
   } catch (e: any) {
     console.error('Transfer Error:', e);

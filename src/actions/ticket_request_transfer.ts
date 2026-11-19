@@ -11,6 +11,9 @@ import type { UserProfile } from '@/lib/types';
 const RequestTransferSchema = z.object({
   ticketId: z.string().min(1),
   newCategoryId: z.string().min(1),
+  campusId: z.string().optional().default(''),
+  schoolId: z.string().optional().default(''),
+  divisionId: z.string().optional().default(''),
   actorId: z.string().min(1),
   actorName: z.string().min(1),
 });
@@ -19,16 +22,6 @@ export type RequestTransferState = {
   success: boolean;
   message?: string;
 };
-
-// General Support and Operations are exempt
-// from academic and campus routing restrictions.
-function isDepartmentOnly(name: string): boolean {
-  const normalized = name.trim().toLowerCase();
-  return (
-    normalized === 'general support' ||
-    normalized === 'operations'
-  );
-}
 
 function values(...inputs: unknown[]): string[] {
   return inputs.flatMap(input => {
@@ -47,78 +40,16 @@ function values(...inputs: unknown[]): string[] {
   });
 }
 
-// Match a manager against an optional ticket scope.
-// IDs take priority. Names are used only when
-// the ticket does not contain an ID.
-function matchesScope(
-  targetId: unknown,
-  targetName: unknown,
-  managerIds: unknown,
-  managerNames: unknown
-): boolean {
-  const id = typeof targetId === 'string'
-    ? targetId.trim()
-    : '';
-
-  const name = typeof targetName === 'string'
-    ? targetName.trim().toLowerCase()
-    : '';
-
-  // Missing scope means no restriction.
-  if (!id && !name) return true;
-
-  const ids = values(managerIds);
-  const names = values(managerNames)
-    .map(v => v.toLowerCase());
-
-  if (id) return ids.includes(id);
-
-  return names.includes(name);
-}
-
 function managerMatchesTicket(
   manager: UserProfile,
   ticket: Record<string, any>,
-  departmentOnly: boolean
+  _departmentOnly: boolean
 ): boolean {
-  // Preserve the special routing exemption.
-  if (departmentOnly) return true;
-
+  // Approval belongs to the manager of the CURRENT category and CURRENT campus.
+  // School / Division / Grade are not requirements for selecting an approver.
+  if (!ticket.campusId) return true; // Legacy tickets without a campus.
   const m = manager as UserProfile & Record<string, any>;
-
-  // Campus is required for regular departments.
-  if (!ticket.campusId) return false;
-
-  if (!values(m.campusIds, m.campusId)
-      .includes(ticket.campusId)) {
-    return false;
-  }
-
-  // School, when specified.
-  if (!matchesScope(
-    ticket.schoolId,
-    ticket.schoolName || ticket.school,
-    m.schoolIds,
-    [m.schoolNames, m.schools, m.schoolName]
-  )) return false;
-
-  // Division, when specified.
-  if (!matchesScope(
-    ticket.divisionId,
-    ticket.divisionName || ticket.division,
-    m.divisionIds,
-    [m.divisionNames, m.divisions, m.divisionName]
-  )) return false;
-
-  // Grade, when specified.
-  if (!matchesScope(
-    ticket.gradeId,
-    ticket.gradeName || ticket.grade,
-    m.gradeIds,
-    [m.gradeNames, m.grades, m.gradeName]
-  )) return false;
-
-  return true;
+  return values(m.campusIds, m.campusId).includes(ticket.campusId);
 }
 
 export async function requestTicketTransferAction(
@@ -137,6 +68,9 @@ export async function requestTicketTransferAction(
   const validated = RequestTransferSchema.safeParse({
     ticketId: formData.get('ticketId'),
     newCategoryId: formData.get('newCategoryId'),
+    campusId: formData.get('campusId') || '',
+    schoolId: formData.get('schoolId') || '',
+    divisionId: formData.get('divisionId') || '',
     actorId: formData.get('actorId'),
     actorName: formData.get('actorName'),
   });
@@ -151,6 +85,9 @@ export async function requestTicketTransferAction(
   const {
     ticketId,
     newCategoryId,
+    campusId: selectedCampusId,
+    schoolId: selectedSchoolId,
+    divisionId: selectedDivisionId,
     actorId,
     actorName,
   } = validated.data;
@@ -190,7 +127,36 @@ export async function requestTicketTransferAction(
 
     const actorData = actorDoc.data() as UserProfile;
     const ticketData = ticketDoc.data()!;
-
+    // Only the explicit choice overrides the existing campus.
+    const targetCampusId = selectedCampusId || ticketData.campusId || '';
+    const campusChanged = !!selectedCampusId && selectedCampusId !== (ticketData.campusId || '');
+    const targetCampusDoc = targetCampusId
+      ? await db.collection('campuses').doc(targetCampusId).get()
+      : null;
+    if (selectedCampusId && !targetCampusDoc?.exists)
+      return { success: false, message: 'Selected Campus does not exist.' };
+    const targetCampusName = targetCampusDoc?.data()?.name || (campusChanged ? '' : ticketData.campusName) || null;
+    // Validate cascading destination scope against the selected/effective campus.
+    const campusConfig = targetCampusDoc?.data()?.schoolConfigs || [];
+    const targetSchoolId = selectedSchoolId || (campusChanged ? '' : ticketData.schoolId || '');
+    const schoolChanged = targetSchoolId !== (ticketData.schoolId || '');
+    const schoolConfig = campusConfig.find((c: any) => c.schoolId === targetSchoolId);
+    if (selectedSchoolId && !schoolConfig)
+      return { success: false, message: 'School is not available in the selected Campus.' };
+    const schoolDoc = targetSchoolId ? await db.collection('schools').doc(targetSchoolId).get() : null;
+    if (targetSchoolId && !schoolDoc?.exists)
+      return { success: false, message: 'Selected School does not exist.' };
+    const targetSchoolName = schoolDoc?.data()?.name || (!schoolChanged ? ticketData.schoolName : null) || null;
+    const targetDivisionId = selectedDivisionId || ((campusChanged || schoolChanged) ? '' : ticketData.divisionId || '');
+    const divisionChanged = targetDivisionId !== (ticketData.divisionId || '');
+    const allowedDivisionIds = (schoolConfig?.divisions || []).map((d: any) => d.divisionId);
+    if (selectedDivisionId && (!targetSchoolId || !allowedDivisionIds.includes(selectedDivisionId)))
+      return { success: false, message: 'Division is not available in the selected School.' };
+    const divisionDoc = targetDivisionId ? await db.collection('divisions').doc(targetDivisionId).get() : null;
+    if (targetDivisionId && !divisionDoc?.exists)
+      return { success: false, message: 'Selected Division does not exist.' };
+    const targetDivisionName = divisionDoc?.data()?.name || (!divisionChanged ? ticketData.divisionName : null) || null;
+    const scopeChanged = campusChanged || schoolChanged || divisionChanged;
     const targetCategoryName =
       targetCategoryDoc.data()!.name as string;
 
@@ -241,47 +207,34 @@ export async function requestTicketTransferAction(
       };
     }
 
-    // 3. Find managers of the TARGET category.
-    const targetManagersSnapshot = await db
+    // 3. Find managers of the CURRENT category and CURRENT campus.
+    const currentManagersSnapshot = await db
       .collection('users')
-      .where('departmentId', '==', newCategoryId)
+      .where('departmentId', '==', ticketData.departmentId)
       .where('role', '==', 'Manager')
       .get();
 
-    const departmentOnly =
-      isDepartmentOnly(targetCategoryName);
-
     const recipientIds = new Set<string>();
 
-    targetManagersSnapshot.docs.forEach(doc => {
+    currentManagersSnapshot.docs.forEach(doc => {
       const manager = doc.data() as UserProfile;
 
       if (
         managerMatchesTicket(
           manager,
           ticketData,
-          departmentOnly
+          false // Approver must match the original campus.
         )
       ) {
         recipientIds.add(doc.id);
       }
     });
 
-    // Preserve existing Admin visibility.
-    const adminsSnapshot = await db
-      .collection('users')
-      .where('role', '==', 'Admin')
-      .get();
-
-    adminsSnapshot.docs.forEach(doc => {
-      recipientIds.add(doc.id);
-    });
-
     if (recipientIds.size === 0) {
       return {
         success: false,
         message:
-          'No eligible manager or administrator found for this transfer.',
+          'No manager found for the current Category and Campus.',
       };
     }
 
@@ -312,7 +265,7 @@ export async function requestTicketTransferAction(
       const currentTicket = currentTicketDoc.data()!;
 
       // Prevent concurrent duplicate requests.
-      if (currentTicket.pendingTransferRequestId) {
+      if (currentTicket.pendingTransferRequestId || currentTicket.pendingLocalTransferRequestId) {
         throw new Error(
           'A pending transfer request already exists.'
         );
@@ -320,7 +273,8 @@ export async function requestTicketTransferAction(
 
       if (
         currentTicket.departmentId !==
-        ticketData.departmentId
+         ticketData.departmentId ||
+         (currentTicket.campusId || '') !== (ticketData.campusId || '')
       ) {
         throw new Error(
           'Ticket department has changed. Please refresh.'
@@ -350,25 +304,27 @@ export async function requestTicketTransferAction(
         previousStatus:
           currentTicket.status || null,
 
-        campusId:
-          currentTicket.campusId || null,
-        campusName:
-          currentTicket.campusName || null,
+        campusId: targetCampusId || null,
+        campusName: targetCampusName,
+        fromCampusId: currentTicket.campusId || null,
+        fromCampusName: currentTicket.campusName || null,
+        toCampusId: targetCampusId || null,
+        toCampusName: targetCampusName,
+        campusChanged,
 
-        schoolId:
-          currentTicket.schoolId || null,
-        schoolName:
-          currentTicket.schoolName || null,
-
-        divisionId:
-          currentTicket.divisionId || null,
-        divisionName:
-          currentTicket.divisionName || null,
-
-        gradeId:
-          currentTicket.gradeId || null,
-        gradeName:
-          currentTicket.gradeName || null,
+        fromSchoolId: currentTicket.schoolId || null,
+        fromDivisionId: currentTicket.divisionId || null,
+        schoolId: targetSchoolId || null,
+        schoolName: targetSchoolName,
+        toSchoolId: targetSchoolId || null,
+        toSchoolName: targetSchoolName,
+        divisionId: targetDivisionId || null,
+        divisionName: targetDivisionName,
+        toDivisionId: targetDivisionId || null,
+        toDivisionName: targetDivisionName,
+        gradeId: scopeChanged ? null : (currentTicket.gradeId || null),
+        gradeName: scopeChanged ? null : (currentTicket.gradeName || null),
+        scopeChanged,
       };
 
       // Store one canonical request for approval.
@@ -384,6 +340,12 @@ export async function requestTicketTransferAction(
 
         requestedCategoryId: newCategoryId,
         requestedCategoryName: targetCategoryName,
+        requestedCampusId: targetCampusId || null,
+        requestedCampusName: targetCampusName,
+        requestedSchoolId: targetSchoolId || null,
+        requestedSchoolName: targetSchoolName,
+        requestedDivisionId: targetDivisionId || null,
+        requestedDivisionName: targetDivisionName,
 
         recipientIds: Array.from(recipientIds),
         requestMetadata: metadata,
@@ -406,7 +368,7 @@ export async function requestTicketTransferAction(
           message:
             `${actorName} requested to move Ticket #` +
             `${currentTicket.ticketNumber || ticketId.substring(0, 4)}` +
-            ` to ${targetCategoryName}.`,
+            ` to ${targetCategoryName}${targetCampusName ? ` / ${targetCampusName}` : ''}.`,
 
           recipient: recipientId,
           read: false,
@@ -429,6 +391,8 @@ export async function requestTicketTransferAction(
         pendingTransferRequestId: requestId,
         pendingTransferCategoryId: newCategoryId,
         pendingTransferCategoryName: targetCategoryName,
+        pendingTransferCampusId: targetCampusId || null,
+        pendingTransferCampusName: targetCampusName,
 
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -453,6 +417,8 @@ export async function requestTicketTransferAction(
           requestId,
           targetCategoryId: newCategoryId,
           targetCategoryName,
+          targetCampusId: targetCampusId || null,
+          targetCampusName,
         },
       });
     } catch (logError) {
@@ -468,7 +434,7 @@ export async function requestTicketTransferAction(
       success: true,
       message:
         `Transfer request sent for approval to ` +
-        `${targetCategoryName}. Ticket moved to Queue.`,
+        `the current Category manager. Ticket moved to Queue.`,
     };
 
   } catch (error: any) {
